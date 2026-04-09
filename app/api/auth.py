@@ -1,6 +1,11 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
+from jose import jwt
 from pydantic import BaseModel, EmailStr
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.database import get_db
 from app.services.cognito import register_user, login_user, confirm_email, refresh_token
+from app.services.user import get_or_create_user
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -38,10 +43,19 @@ async def register(body: RegisterRequest):
 
 
 @router.post("/login")
-async def login(body: LoginRequest):
+async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
     try:
-        result = login_user(body.email, body.password)
-        return result
+        tokens = login_user(body.email, body.password)
+
+        # Cognito has already authenticated this token pair, so we only need
+        # the claims payload here to link the identity into our database.
+        id_token_claims = jwt.get_unverified_claims(tokens["id_token"])
+        cognito_sub = id_token_claims["sub"]
+        email = id_token_claims["email"]
+
+        await get_or_create_user(db, cognito_sub, email)
+
+        return tokens
     except ValueError as e:
         raise HTTPException(status_code=401, detail=str(e))
 

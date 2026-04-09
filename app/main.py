@@ -1,5 +1,8 @@
 from fastapi import FastAPI, Depends
-from app.database import engine, Base
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.database import engine, Base, get_db
 from app.models import User
 from app.api import auth
 from app.middleware.auth import get_current_user
@@ -18,10 +21,20 @@ async def health():
     return {"status": "ok"}
 
 
-# Protected test route — requires valid JWT
 @app.get("/me")
-async def me(user=Depends(get_current_user)):
+async def me(user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(User).where(User.cognito_sub == user["sub"])
+    )
+    db_user = result.scalar_one_or_none()
+
+    if db_user is None:
+        return {"error": "User not found in database"}
+
     return {
-        "sub": user["sub"],
-        "username": user["username"]
+        "id": db_user.id,
+        "email": db_user.email,
+        "credits_balance": db_user.credits_balance,
+        "subscription_tier": db_user.subscription_tier,
+        "created_at": db_user.created_at
     }
