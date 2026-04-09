@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from app.database import engine, Base
-import app.models
+from app.models import User
 
 app = FastAPI(title="Orchestryx API")
 
