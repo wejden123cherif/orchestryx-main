@@ -1,7 +1,13 @@
 from fastapi import FastAPI
+from app.database import engine, Base
 
 app = FastAPI(title="Orchestryx API")
 
+@app.on_event("startup")
+async def startup():
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
 @app.get("/health")
-def health():
+async def health():
     return {"status": "ok"}
