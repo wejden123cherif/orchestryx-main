@@ -1,13 +1,25 @@
 from fastapi import FastAPI, Depends
-from sqlalchemy import select
+from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.ext.asyncio import AsyncSession
-
+from sqlalchemy import select
 from app.database import engine, Base, get_db
-from app.models import User
 from app.api import auth
 from app.middleware.auth import get_current_user
+from app.models.user import User
+import app.models.user
 
 app = FastAPI(title="Orchestryx API")
+
+# Allow frontend to talk to backend
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],  # frontend URL
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
 
 @app.on_event("startup")
 async def startup():
