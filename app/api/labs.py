@@ -76,7 +76,14 @@ async def start_lab(
     await db.commit()
     await db.refresh(instance)
 
-    # TODO: dispatch Celery task to SQS here (coming next)
+    # Dispatch Celery provisioning task to SQS
+    from app.workers.provision import provision_lab
+
+    provision_lab.delay(
+        instance_id=instance.id,
+        template_id=template.id,
+        user_id=db_user.id,
+    )
 
     return {
         "instance_id": instance.id,
@@ -171,7 +178,7 @@ async def stop_lab(
     """
     Stop a running lab.
     Updates status to DESTROYING.
-    TODO: dispatch Celery destroy task (coming next)
+    Dispatches Celery destroy task asynchronously.
     """
     result = await db.execute(
         select(User).where(User.cognito_sub == user["sub"])
@@ -199,7 +206,13 @@ async def stop_lab(
     instance.status = "DESTROYING"
     await db.commit()
 
-    # TODO: dispatch Celery destroy task here (coming next)
+    # Dispatch Celery destroy task to SQS
+    from app.workers.destroy import destroy_lab
+
+    destroy_lab.delay(
+        instance_id=instance.id,
+        cfn_stack_name=instance.cfn_stack_name or f"orchestryx-lab-{instance.id}",
+    )
 
     return {
         "instance_id": instance.id,
