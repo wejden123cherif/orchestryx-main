@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.database import engine, Base, get_db
-from app.api import auth, catalog
+from app.api import auth, catalog, labs
 from app.middleware.auth import get_current_user
 from app.models.lab_template import LabTemplate
 from app.models.user import User
@@ -41,6 +41,7 @@ async def startup():
 
 app.include_router(auth.router)
 app.include_router(catalog.router)
+app.include_router(labs.router)
 
 @app.get("/health")
 async def health():
