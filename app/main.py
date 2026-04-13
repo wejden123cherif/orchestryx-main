@@ -10,6 +10,7 @@ from app.models.user import User
 from app.seeds import LAB_TEMPLATES
 import app.models.user
 import app.models.lab_template
+import app.models.lab_instance
 
 app = FastAPI(title="Orchestryx API")
 
