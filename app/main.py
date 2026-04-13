@@ -7,6 +7,7 @@ from app.api import auth
 from app.middleware.auth import get_current_user
 from app.models.user import User
 import app.models.user
+import app.models.lab_template
 
 app = FastAPI(title="Orchestryx API")
 
