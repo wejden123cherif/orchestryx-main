@@ -5,7 +5,9 @@ from sqlalchemy import select
 from app.database import engine, Base, get_db
 from app.api import auth
 from app.middleware.auth import get_current_user
+from app.models.lab_template import LabTemplate
 from app.models.user import User
+from app.seeds import LAB_TEMPLATES
 import app.models.user
 import app.models.lab_template
 
@@ -26,6 +28,15 @@ app.add_middleware(
 async def startup():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
+    # Seed lab templates if table is empty
+    async with AsyncSession(engine) as session:
+        result = await session.execute(select(LabTemplate))
+        existing = result.scalars().all()
+        if not existing:
+            session.add_all(LAB_TEMPLATES)
+            await session.commit()
+            print(f"Seeded {len(LAB_TEMPLATES)} lab templates")
 
 app.include_router(auth.router)
 
