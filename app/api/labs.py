@@ -1,13 +1,18 @@
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
-from pydantic import BaseModel
 from datetime import datetime, timedelta, timezone
+
+import boto3
+from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import PlainTextResponse
+from pydantic import BaseModel
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.config import AWS_REGION
 from app.database import get_db
-from app.models.user import User
-from app.models.lab_template import LabTemplate
-from app.models.lab_instance import LabInstance
 from app.middleware.auth import get_current_user
+from app.models.lab_instance import LabInstance
+from app.models.lab_template import LabTemplate
+from app.models.user import User
 
 router = APIRouter(prefix="/labs", tags=["labs"])
 
@@ -212,6 +217,7 @@ async def stop_lab(
     destroy_lab.delay(
         instance_id=instance.id,
         cfn_stack_name=instance.cfn_stack_name or f"orchestryx-lab-{instance.id}",
+        secrets_key=instance.secrets_key,
     )
 
     return {
@@ -219,3 +225,59 @@ async def stop_lab(
         "status": instance.status,
         "message": "Lab is being destroyed.",
     }
+
+
+@router.get("/{instance_id}/config")
+async def get_lab_config(
+    instance_id: str,
+    user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Download the WireGuard client config for a running lab owned by the user.
+    The config is stored in Secrets Manager by the provisioning worker.
+    """
+    result = await db.execute(
+        select(User).where(User.cognito_sub == user["sub"])
+    )
+    db_user = result.scalar_one_or_none()
+    if db_user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    result = await db.execute(
+        select(LabInstance).where(
+            LabInstance.id == instance_id,
+            LabInstance.user_id == db_user.id,
+        )
+    )
+    instance = result.scalar_one_or_none()
+    if instance is None:
+        raise HTTPException(status_code=404, detail="Lab instance not found")
+
+    if instance.status != "RUNNING":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot download config for a lab with status {instance.status}",
+        )
+
+    if instance.secrets_key is None:
+        raise HTTPException(status_code=404, detail="VPN config not found")
+
+    secrets = boto3.client("secretsmanager", region_name=AWS_REGION)
+    try:
+        secret = secrets.get_secret_value(SecretId=instance.secrets_key)
+    except secrets.exceptions.ResourceNotFoundException:
+        raise HTTPException(status_code=404, detail="VPN config not found")
+
+    config = secret.get("SecretString")
+    if config is None:
+        raise HTTPException(status_code=404, detail="VPN config not found")
+
+    return PlainTextResponse(
+        config,
+        headers={
+            "Content-Disposition": (
+                f"attachment; filename=orchestryx-lab-{instance_id}.conf"
+            ),
+        },
+    )
