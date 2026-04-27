@@ -17,6 +17,8 @@ RUN apt-get update \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY app ./app
+COPY apps ./apps
+COPY workers ./workers
+COPY infra ./infra
 
-CMD ["celery", "-A", "app.workers.celery_app", "worker", "--loglevel=info", "--pool=solo", "-I", "app.workers.provision,app.workers.destroy"]
+CMD ["celery", "-A", "workers.celery_app", "worker", "--loglevel=info", "--pool=solo", "-I", "workers.provision,workers.destroy"]

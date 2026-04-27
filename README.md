@@ -41,32 +41,25 @@ Docker Compose is for isolated local development and currently includes a local 
 
 ```text
 .
-├── app/
-│   ├── api/
-│   │   ├── auth.py          # Cognito-backed auth endpoints
-│   │   ├── catalog.py       # Authenticated lab template catalog endpoints
-│   │   └── labs.py          # Authenticated lab lifecycle and config endpoints
-│   ├── middleware/
-│   │   └── auth.py          # Cognito JWKS fetch and JWT validation
-│   ├── models/
-│   │   ├── user.py          # User credit/account model
-│   │   ├── lab_template.py  # Catalog template model
-│   │   └── lab_instance.py  # Per-user lab session model
-│   ├── services/
-│   │   ├── cognito.py       # Cognito sign-up/login/confirm/refresh calls
-│   │   └── user.py          # User lookup/create helper
-│   ├── workers/
-│   │   ├── celery_app.py    # Celery over SQS configuration
-│   │   ├── provision.py     # CDK deploy + VPN secret creation task
-│   │   └── destroy.py       # CDK destroy + cleanup task
-│   ├── config.py            # Environment-driven configuration
-│   ├── database.py          # Async SQLAlchemy engine/session setup
-│   ├── main.py              # FastAPI app, routers, startup seeding
-│   └── seeds.py             # Initial Juice Shop lab template
+├── apps/
+│   └── api/
+│       ├── api/             # FastAPI route modules
+│       ├── middleware/      # Cognito JWT validation
+│       ├── models/          # SQLAlchemy ORM models
+│       ├── services/        # Cognito and user service helpers
+│       ├── config.py        # Environment-driven configuration
+│       ├── database.py      # Async SQLAlchemy engine/session setup
+│       ├── main.py          # FastAPI app, routers, startup seeding
+│       └── seeds.py         # Initial Juice Shop lab template
+├── workers/
+│   ├── celery_app.py        # Celery over SQS configuration
+│   ├── provision.py         # CDK deploy + VPN secret creation task
+│   └── destroy.py           # CDK destroy + cleanup task
+├── infra/                   # In-repo AWS CDK app used by provisioning workers
 ├── Dockerfile               # API container
-├── Dockerfile.worker        # Celery worker container
+├── Dockerfile.worker        # Celery worker container with infra packaged in
 ├── docker-compose.yml       # Local API + worker + Postgres dev stack
-├── requirements.txt         # Direct Python runtime dependencies
+├── requirements.txt         # API, worker, infra, and dev Python dependencies
 └── .env.example             # Documented environment template
 ```
 
@@ -144,7 +137,6 @@ See [.env.example](.env.example) for a ready-to-copy template.
 | `SQS_DESTROY_URL` | Yes | Full SQS URL for teardown tasks. |
 | `CORS_ALLOWED_ORIGINS` | No | Comma-separated frontend origins. |
 | `CDK_INFRA_PATH` | Yes | Path to the CDK infrastructure project inside the current runtime. |
-| `CDK_INFRA_HOST_PATH` | Docker only | Host path mounted into containers as the CDK infrastructure project. |
 | `WG_DNS` | No | DNS server written into generated WireGuard client configs. |
 
 ## Production Database
@@ -186,13 +178,13 @@ For production-style development, set `DATABASE_URL` to the commented Aurora URL
 Run the API:
 
 ```bash
-uvicorn app.main:app --reload
+uvicorn apps.api.main:app --reload
 ```
 
 Run the worker in a second terminal:
 
 ```bash
-celery -A app.workers.celery_app worker --loglevel=info --pool=solo -I app.workers.provision,app.workers.destroy
+celery -A workers.celery_app worker --loglevel=info --pool=solo -I workers.provision,workers.destroy
 ```
 
 API docs are exposed at `http://localhost:8000/docs`.
@@ -202,7 +194,7 @@ API docs are exposed at `http://localhost:8000/docs`.
 Docker Compose builds two Python images:
 
 - `api`: FastAPI, uvicorn, AWS CDK CLI, WireGuard tools.
-- `worker`: Celery, AWS CDK CLI, WireGuard tools.
+- `worker`: Celery, AWS CDK CLI, WireGuard tools, and the in-repo `infra/` CDK app.
 
 Compose also starts `db` using `postgres:16` for isolated local development. This is not the production database; production uses Aurora Serverless v2.
 
@@ -212,8 +204,7 @@ Set `.env` values first, especially:
 COGNITO_APP_CLIENT_ID
 SQS_PROVISION_URL
 SQS_DESTROY_URL
-CDK_INFRA_PATH=/infra
-CDK_INFRA_HOST_PATH=../orchestryx-infra
+CDK_INFRA_PATH=infra
 ```
 
 Start the stack:
@@ -222,7 +213,7 @@ Start the stack:
 docker compose up --build
 ```
 
-Compose mounts `~/.aws:/root/.aws:ro` so the API and worker can use local AWS credentials. It mounts `${CDK_INFRA_HOST_PATH}` to `${CDK_INFRA_PATH}` so workers can run `cdk deploy` and `cdk destroy`.
+Compose mounts `~/.aws:/root/.aws:ro` so the API and worker can use local AWS credentials. The worker image includes the monorepo `infra/` folder under its `/app` workdir, so the same image can be pushed to ECR and run on ECS without depending on a host-mounted sibling repository.
 
 ## Provisioning Flow
 
@@ -253,8 +244,9 @@ Compose mounts `~/.aws:/root/.aws:ro` so the API and worker can use local AWS cr
 - Credit deduction on lab start.
 - SQS-backed Celery configuration.
 - Provision and destroy worker task modules.
+- CDK infrastructure project moved into the monorepo under `infra/`.
 - Dockerfile for API.
-- Dockerfile for worker.
+- Dockerfile for worker with the CDK infra app packaged in.
 - Docker Compose stack for local API, worker, and dev Postgres.
 
 ### In Progress
@@ -280,7 +272,7 @@ Compose mounts `~/.aws:/root/.aws:ro` so the API and worker can use local AWS cr
 
 - Do not commit `.env` or AWS credentials.
 - Keep production configuration in environment variables, not source code.
-- API code should use async SQLAlchemy sessions from `app.database`.
+- API code should use async SQLAlchemy sessions from `apps.api.database`.
 - Celery workers should use synchronous SQLAlchemy engines and sessions.
 - Any endpoint that returns user, catalog, or lab data should require Cognito auth unless it is explicitly public.
 - Do not log access tokens, refresh tokens, passwords, WireGuard keys, VPN configs, or CDK command output that may contain secrets.
