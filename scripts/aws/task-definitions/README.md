@@ -1,6 +1,6 @@
 # ECS Task Definitions
 
-This folder contains the exact task definition JSON files registered by `scripts/setup-aws.sh` and `scripts/setup-aws.ps1`.
+This folder contains the exact task definition JSON files registered by `scripts/linux/setup-aws.sh` and `scripts/windows/setup-aws.ps1`.
 
 Current contents:
 

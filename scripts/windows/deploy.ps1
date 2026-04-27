@@ -1,9 +1,9 @@
 <# 
 Build and deploy Orchestryx ECS images.
 Usage:
-  .\scripts\deploy.ps1          # deploy API and worker
-  .\scripts\deploy.ps1 api      # deploy only API
-  .\scripts\deploy.ps1 worker   # deploy only worker
+  .\scripts\windows\deploy.ps1          # deploy API and worker
+  .\scripts\windows\deploy.ps1 api      # deploy only API
+  .\scripts\windows\deploy.ps1 worker   # deploy only worker
 #>
 
 param(

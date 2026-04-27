@@ -1,13 +1,13 @@
-.PHONY: deploy deploy-api deploy-worker logs-api logs-worker status restart-api restart-worker setup-aws
+.PHONY: deploy deploy-api deploy-worker logs-api logs-worker status restart-api restart-worker setup-aws cockpit
 
 deploy:
-	./scripts/deploy.sh
+	./scripts/linux/deploy.sh
 
 deploy-api:
-	./scripts/deploy.sh api
+	./scripts/linux/deploy.sh api
 
 deploy-worker:
-	./scripts/deploy.sh worker
+	./scripts/linux/deploy.sh worker
 
 logs-api:
 	aws logs tail /ecs/orchestryx-api --follow --region eu-central-1
@@ -25,4 +25,7 @@ restart-worker:
 	aws ecs update-service --cluster orchestryx --service orchestryx-worker-service --force-new-deployment --region eu-central-1
 
 setup-aws:
-	bash scripts/setup-aws.sh
+	bash scripts/linux/setup-aws.sh
+
+cockpit:
+	cd cockpit && uvicorn main:app --reload --port 9000

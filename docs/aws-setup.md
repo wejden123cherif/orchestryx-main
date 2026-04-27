@@ -250,7 +250,7 @@ These resources were already created before this documentation pass on April 27,
 - ECS task definitions: `orchestryx-api:1`, `orchestryx-worker:1`
 - ECS services: `orchestryx-api-service`, `orchestryx-worker-service`
 
-The exact history is represented by `scripts/setup-aws.sh` and `scripts/setup-aws.ps1`. These scripts are designed to skip resources that already exist.
+The exact history is represented by `scripts/linux/setup-aws.sh` and `scripts/windows/setup-aws.ps1`. These scripts are designed to skip resources that already exist.
 
 ## Operations
 
@@ -271,8 +271,8 @@ make setup-aws
 PowerShell equivalents:
 
 ```powershell
-.\scripts\deploy.ps1
-.\scripts\deploy.ps1 api
-.\scripts\deploy.ps1 worker
-.\scripts\setup-aws.ps1
+.\scripts\windows\deploy.ps1
+.\scripts\windows\deploy.ps1 api
+.\scripts\windows\deploy.ps1 worker
+.\scripts\windows\setup-aws.ps1
 ```

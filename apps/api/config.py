@@ -56,5 +56,5 @@ PROVISION_QUEUE = _optional("PROVISION_QUEUE", "orchestryx-provision-lab")
 DESTROY_QUEUE = _optional("DESTROY_QUEUE", "orchestryx-destroy-lab")
 
 # Lab provisioning
-CDK_INFRA_PATH = _required("CDK_INFRA_PATH")
+CDK_INFRA_PATH = os.getenv("CDK_INFRA_PATH", "infra")
 WG_DNS = _optional("WG_DNS", "1.1.1.1")

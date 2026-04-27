@@ -6,6 +6,7 @@
     ],
     "exclude": [
       "README.md",
+      "summary.md",
       "cdk*.json",
       "requirements*.txt",
       "source.bat",

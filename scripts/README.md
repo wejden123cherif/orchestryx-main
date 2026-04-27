@@ -4,11 +4,16 @@ This folder contains operational scripts for Orchestryx deployment and AWS setup
 
 Current contents:
 
-- `deploy.sh`: Linux/macOS/CI script that builds API and worker images, pushes them to ECR, and forces ECS redeployments.
-- `deploy.ps1`: Windows PowerShell equivalent of `deploy.sh`.
-- `setup-aws.sh`: Linux/macOS/CI one-time AWS setup script. It is idempotent and safe to rerun.
-- `setup-aws.ps1`: Windows PowerShell equivalent of `setup-aws.sh`.
+- `linux/`: Bash scripts for Linux, macOS, WSL, and CI.
+- `windows/`: PowerShell scripts for Windows teammates.
 - `aws/`: version-controlled AWS deployment assets grouped by service area.
+
+OS-specific scripts:
+
+- `linux/deploy.sh`: builds API and worker images, pushes them to ECR, and forces ECS redeployments.
+- `linux/setup-aws.sh`: idempotent one-time AWS setup script for Bash environments.
+- `windows/deploy.ps1`: PowerShell equivalent of the Bash deploy script.
+- `windows/setup-aws.ps1`: PowerShell equivalent of the Bash setup script.
 
 AWS asset folders:
 

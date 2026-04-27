@@ -3,9 +3,9 @@ set -euo pipefail
 
 # Build and deploy Orchestryx ECS images.
 # Usage:
-#   ./scripts/deploy.sh          # deploy API and worker
-#   ./scripts/deploy.sh api      # deploy only API
-#   ./scripts/deploy.sh worker   # deploy only worker
+#   ./scripts/linux/deploy.sh          # deploy API and worker
+#   ./scripts/linux/deploy.sh api      # deploy only API
+#   ./scripts/linux/deploy.sh worker   # deploy only worker
 
 AWS_REGION="eu-central-1"
 AWS_ACCOUNT_ID="254076817005"

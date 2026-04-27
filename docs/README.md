@@ -1,10 +1,14 @@
 # Docs
 
-This folder contains long-form project and operations documentation.
+This folder contains long-form project, architecture, roadmap, and operations documentation.
 
 Current contents:
 
-- `aws-setup.md`: reference documentation for the AWS infrastructure used by Orchestryx ECS deployment.
+- `overview.md`: what Orchestryx is building and why.
+- `architecture.md`: components, data flow, and system diagrams.
+- `roadmap.md`: current state, next steps, and future phases.
+- `aws-setup.md`: AWS infrastructure reference for the ECS deployment.
+- `summary.md`: folder-level documentation.
 
 Future use:
 
