@@ -1,0 +1,45 @@
+{
+  "vpcId": "vpc-0d10f5a5902d4ffd4",
+  "securityGroups": [
+    {
+      "name": "orchestryx-api-sg",
+      "id": "sg-0205b75f583ebfa25",
+      "description": "Orchestryx API ECS tasks",
+      "ingress": [
+        {
+          "protocol": "tcp",
+          "port": 8000,
+          "source": "0.0.0.0/0",
+          "purpose": "Temporary direct API access before an Application Load Balancer is added."
+        }
+      ]
+    },
+    {
+      "name": "orchestryx-worker-sg",
+      "id": "sg-0db089ffb994e8272",
+      "description": "Orchestryx worker ECS tasks",
+      "ingress": []
+    },
+    {
+      "name": "orchestryx-aurora-sg",
+      "id": "sg-0088ffc271e2fa353",
+      "description": "Aurora PostgreSQL access for Orchestryx services",
+      "ingress": [
+        {
+          "protocol": "tcp",
+          "port": 5432,
+          "sourceSecurityGroupId": "sg-0205b75f583ebfa25",
+          "sourceSecurityGroupName": "orchestryx-api-sg",
+          "purpose": "Allow API tasks to connect to Aurora PostgreSQL."
+        },
+        {
+          "protocol": "tcp",
+          "port": 5432,
+          "sourceSecurityGroupId": "sg-0db089ffb994e8272",
+          "sourceSecurityGroupName": "orchestryx-worker-sg",
+          "purpose": "Allow worker tasks to connect to Aurora PostgreSQL."
+        }
+      ]
+    }
+  ]
+}

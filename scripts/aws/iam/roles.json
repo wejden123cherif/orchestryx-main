@@ -1,0 +1,37 @@
+{
+  "roles": [
+    {
+      "name": "orchestryx-ecs-execution-role",
+      "arn": "arn:aws:iam::254076817005:role/orchestryx-ecs-execution-role",
+      "purpose": "ECS task execution role used by Fargate to pull images, write logs, and inject Secrets Manager values.",
+      "assumeRolePolicyDocument": "scripts/aws/iam/ecs-task-trust-policy.json",
+      "managedPolicyArns": [
+        "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy",
+        "arn:aws:iam::aws:policy/SecretsManagerReadWrite"
+      ]
+    },
+    {
+      "name": "orchestryx-api-task-role",
+      "arn": "arn:aws:iam::254076817005:role/orchestryx-api-task-role",
+      "purpose": "Runtime role for the FastAPI service. It talks to Cognito and reads/writes platform secrets as currently configured.",
+      "assumeRolePolicyDocument": "scripts/aws/iam/ecs-task-trust-policy.json",
+      "managedPolicyArns": [
+        "arn:aws:iam::aws:policy/AmazonCognitoPowerUser",
+        "arn:aws:iam::aws:policy/SecretsManagerReadWrite"
+      ]
+    },
+    {
+      "name": "orchestryx-worker-task-role",
+      "arn": "arn:aws:iam::254076817005:role/orchestryx-worker-task-role",
+      "purpose": "Runtime role for Celery workers. It consumes SQS and provisions or destroys lab infrastructure through CDK/CloudFormation.",
+      "assumeRolePolicyDocument": "scripts/aws/iam/ecs-task-trust-policy.json",
+      "managedPolicyArns": [
+        "arn:aws:iam::aws:policy/AmazonSQSFullAccess",
+        "arn:aws:iam::aws:policy/AWSCloudFormationFullAccess",
+        "arn:aws:iam::aws:policy/AmazonEC2FullAccess",
+        "arn:aws:iam::aws:policy/SecretsManagerReadWrite",
+        "arn:aws:iam::aws:policy/CloudWatchFullAccess"
+      ]
+    }
+  ]
+}

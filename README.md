@@ -18,10 +18,10 @@ Production is centered on AWS managed services:
 - **AWS CDK / CloudFormation**: infrastructure deployment path for lab environments.
 - **AWS Secrets Manager**: stores generated WireGuard client configs.
 - **WireGuard**: current lab access mechanism.
-- **ECS / Fargate planned**: target runtime for serverless/containerized lab workloads.
-- **ECR planned**: target image registry for pre-built and uploaded lab containers.
+- **Amazon ECS / Fargate**: container runtime for the API and worker services; also the target direction for future lab workloads.
+- **Amazon ECR**: image registry for API and worker containers, and later for pre-built or uploaded lab containers.
 
-The current code still contains MVP provisioning fields for CloudFormation stack names, EC2 public IP output, and WireGuard config delivery while the CDK lab stack is being finished. The product direction is serverless or managed AWS infrastructure wherever practical, with Aurora Serverless v2 for production data and ECS/Fargate planned for lab execution.
+The current code still contains MVP provisioning fields for CloudFormation stack names, EC2 public IP output, and WireGuard config delivery while the CDK lab stack is being finished. The product direction is serverless or managed AWS infrastructure wherever practical, with Aurora Serverless v2 for production data and ECS/Fargate as the deployment path.
 
 ## Known AWS Environment
 
@@ -33,6 +33,9 @@ The current code still contains MVP provisioning fields for CloudFormation stack
 | Aurora Serverless v2 cluster | `orchestryx-db.cluster-cz86ciucmlhr.eu-central-1.rds.amazonaws.com` |
 | Provision queue | `orchestryx-provision-lab` |
 | Destroy queue | `orchestryx-destroy-lab` |
+| ECS cluster | `orchestryx` |
+| API service | `orchestryx-api-service` |
+| Worker service | `orchestryx-worker-service` |
 | CDK bootstrap | Completed in `eu-central-1` |
 
 Docker Compose is for isolated local development and currently includes a local Postgres service. Production should use Aurora, not the Compose database.
@@ -56,9 +59,13 @@ Docker Compose is for isolated local development and currently includes a local 
 │   ├── provision.py         # CDK deploy + VPN secret creation task
 │   └── destroy.py           # CDK destroy + cleanup task
 ├── infra/                   # In-repo AWS CDK app used by provisioning workers
+├── scripts/                 # ECS deploy/setup scripts and AWS deployment assets
+│   └── aws/                 # ECS task definitions, IAM, security group, and service manifests
+├── docs/                    # Operations and architecture documentation
 ├── Dockerfile               # API container
 ├── Dockerfile.worker        # Celery worker container with infra packaged in
 ├── docker-compose.yml       # Local API + worker + Postgres dev stack
+├── Makefile                 # Common deployment and operations shortcuts
 ├── requirements.txt         # API, worker, infra, and dev Python dependencies
 └── .env.example             # Documented environment template
 ```
@@ -214,6 +221,73 @@ docker compose up --build
 ```
 
 Compose mounts `~/.aws:/root/.aws:ro` so the API and worker can use local AWS credentials. The worker image includes the monorepo `infra/` folder under its `/app` workdir, so the same image can be pushed to ECR and run on ECS without depending on a host-mounted sibling repository.
+
+## Deployment
+
+Production deployment targets ECS/Fargate in the existing `eu-central-1` AWS environment. The API and worker are built as separate Docker images, pushed to ECR, and rolled forward by forcing new ECS deployments.
+
+### First-Time AWS Setup
+
+The AWS environment has already been created. The exact resources and commands are documented in [docs/aws-setup.md](docs/aws-setup.md).
+
+For a fresh account or a teammate rebuilding the environment, run:
+
+```bash
+make setup-aws
+```
+
+Or on Windows:
+
+```powershell
+.\scripts\setup-aws.ps1
+```
+
+The setup scripts are idempotent and safe to run again. They skip resources that already exist, attach missing policies, ignore duplicate security group rules, and prompt for the Aurora password only when creating the Secrets Manager environment secret.
+
+### Deploy
+
+Deploy both API and worker:
+
+```bash
+make deploy
+```
+
+Deploy only the API:
+
+```bash
+make deploy-api
+```
+
+Deploy only the worker:
+
+```bash
+make deploy-worker
+```
+
+Windows equivalents:
+
+```powershell
+.\scripts\deploy.ps1
+.\scripts\deploy.ps1 api
+.\scripts\deploy.ps1 worker
+```
+
+### Status, Logs, And Restarts
+
+```bash
+make status
+make logs-api
+make logs-worker
+make restart-api
+make restart-worker
+```
+
+These wrap AWS CLI calls for:
+
+- `orchestryx-api-service`
+- `orchestryx-worker-service`
+- `/ecs/orchestryx-api`
+- `/ecs/orchestryx-worker`
 
 ## Provisioning Flow
 

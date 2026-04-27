@@ -1,0 +1,13 @@
+{
+  "region": "eu-central-1",
+  "logGroups": [
+    {
+      "name": "/ecs/orchestryx-api",
+      "purpose": "FastAPI ECS task logs"
+    },
+    {
+      "name": "/ecs/orchestryx-worker",
+      "purpose": "Celery worker ECS task logs"
+    }
+  ]
+}

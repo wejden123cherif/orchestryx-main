@@ -1,0 +1,18 @@
+{
+  "region": "eu-central-1",
+  "accountId": "254076817005",
+  "repositories": [
+    {
+      "name": "orchestryx-api",
+      "uri": "254076817005.dkr.ecr.eu-central-1.amazonaws.com/orchestryx-api",
+      "imageSource": "Dockerfile",
+      "purpose": "FastAPI backend image"
+    },
+    {
+      "name": "orchestryx-worker",
+      "uri": "254076817005.dkr.ecr.eu-central-1.amazonaws.com/orchestryx-worker",
+      "imageSource": "Dockerfile.worker",
+      "purpose": "Celery provision and destroy worker image"
+    }
+  ]
+}

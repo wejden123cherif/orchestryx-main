@@ -7,9 +7,12 @@ WORKDIR /app
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
+        wireguard-tools \
+        curl \
         nodejs \
         npm \
-        wireguard-tools \
+        libcurl4-openssl-dev \
+        libssl-dev \
     && npm install -g aws-cdk \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
