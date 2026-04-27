@@ -3,7 +3,9 @@ import subprocess
 from datetime import datetime, timezone
 
 import boto3
+from botocore.exceptions import BotoCoreError, ClientError
 from sqlalchemy import create_engine
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import sessionmaker
 
 from app.config import AWS_REGION, CDK_INFRA_PATH, DATABASE_URL
@@ -13,33 +15,49 @@ from app.workers.celery_app import DESTROY_QUEUE, celery_app
 logger = logging.getLogger(__name__)
 
 SYNC_DATABASE_URL = DATABASE_URL.replace("+asyncpg", "")
-engine = create_engine(SYNC_DATABASE_URL)
+engine = create_engine(
+    SYNC_DATABASE_URL,
+    pool_pre_ping=True,
+    pool_recycle=300,
+)
 SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
 
 
 def _mark_destroyed(instance_id: str) -> None:
     """Persist final lab state from a synchronous Celery worker."""
-    with SessionLocal() as session:
-        instance = session.get(LabInstance, instance_id)
-        if instance is None:
-            logger.error("Lab instance %s not found while marking DESTROYED", instance_id)
-            return
+    try:
+        with SessionLocal() as session:
+            instance = session.get(LabInstance, instance_id)
+            if instance is None:
+                logger.error("Lab instance %s not found while marking DESTROYED", instance_id)
+                return
 
-        instance.status = "DESTROYED"
-        instance.destroyed_at = datetime.now(timezone.utc)
-        session.commit()
+            instance.status = "DESTROYED"
+            instance.destroyed_at = datetime.now(timezone.utc)
+            session.commit()
+    except SQLAlchemyError as exc:
+        logger.exception("Database write failed while marking lab DESTROYED")
+        raise RuntimeError("Could not mark lab as destroyed") from exc
 
 
 def _delete_secret(secret_key: str) -> None:
     """Delete the VPN config secret, ignoring missing-secret cleanup races."""
-    secrets = boto3.client("secretsmanager", region_name=AWS_REGION)
     try:
+        secrets = boto3.client("secretsmanager", region_name=AWS_REGION)
         secrets.delete_secret(
             SecretId=secret_key,
             ForceDeleteWithoutRecovery=True,
         )
-    except secrets.exceptions.ResourceNotFoundException:
-        logger.info("Secret %s was already missing", secret_key)
+    except ClientError as exc:
+        error_code = exc.response.get("Error", {}).get("Code")
+        if error_code == "ResourceNotFoundException":
+            logger.info("VPN config secret was already missing")
+            return
+        logger.exception("Secrets Manager delete failed")
+        raise RuntimeError("Could not delete VPN config") from exc
+    except BotoCoreError as exc:
+        logger.exception("Secrets Manager client operation failed")
+        raise RuntimeError("Could not delete VPN config") from exc
 
 
 @celery_app.task(queue=DESTROY_QUEUE, bind=True, max_retries=2)
@@ -54,29 +72,32 @@ def destroy_lab(self, instance_id: str, cfn_stack_name: str, secrets_key: str | 
     infra_path = CDK_INFRA_PATH
 
     try:
-        logger.info("Destroying CDK stack %s from %s", cfn_stack_name, infra_path)
-        destroy_result = subprocess.run(
-            ["cdk", "destroy", cfn_stack_name, "--force"],
-            cwd=infra_path,
-            timeout=600,
-            capture_output=True,
-            text=True,
-        )
+        logger.info("Destroying CDK stack %s", cfn_stack_name)
+        try:
+            destroy_result = subprocess.run(
+                ["cdk", "destroy", cfn_stack_name, "--force"],
+                cwd=infra_path,
+                timeout=600,
+                capture_output=True,
+                text=True,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            logger.exception("CDK destroy command could not be started or completed")
+            raise RuntimeError("CDK destroy failed") from exc
 
         if destroy_result.returncode != 0:
             logger.error(
-                "CDK destroy failed for %s with return code %s: %s",
+                "CDK destroy failed for %s with return code %s",
                 cfn_stack_name,
                 destroy_result.returncode,
-                destroy_result.stderr,
             )
 
         if secrets_key is not None:
             try:
-                logger.info("Deleting VPN config secret %s", secrets_key)
+                logger.info("Deleting VPN config secret")
                 _delete_secret(secrets_key)
             except Exception:
-                logger.exception("Failed to delete secret %s; continuing teardown", secrets_key)
+                logger.exception("Failed to delete VPN config secret; continuing teardown")
 
         logger.info("Marking lab instance %s as DESTROYED", instance_id)
         _mark_destroyed(instance_id)

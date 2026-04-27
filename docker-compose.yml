@@ -1,0 +1,61 @@
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: orchestryx
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: orchestryx
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      - db
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql://orchestryx:password@db:5432/orchestryx
+      SQL_ECHO: ${SQL_ECHO:-false}
+      AWS_REGION: ${AWS_REGION:-eu-central-1}
+      COGNITO_USER_POOL_ID: ${COGNITO_USER_POOL_ID}
+      COGNITO_APP_CLIENT_ID: ${COGNITO_APP_CLIENT_ID}
+      SQS_PROVISION_URL: ${SQS_PROVISION_URL}
+      SQS_DESTROY_URL: ${SQS_DESTROY_URL}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:3000}
+      PROVISION_QUEUE: ${PROVISION_QUEUE:-orchestryx-provision-lab}
+      DESTROY_QUEUE: ${DESTROY_QUEUE:-orchestryx-destroy-lab}
+      CDK_INFRA_PATH: ${CDK_INFRA_PATH:-/infra}
+      WG_DNS: ${WG_DNS:-1.1.1.1}
+    volumes:
+      - ~/.aws:/root/.aws:ro
+      - ${CDK_INFRA_HOST_PATH:-../orchestryx-infra}:${CDK_INFRA_PATH:-/infra}:ro
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    depends_on:
+      - db
+    environment:
+      DATABASE_URL: postgresql://orchestryx:password@db:5432/orchestryx
+      SQL_ECHO: ${SQL_ECHO:-false}
+      AWS_REGION: ${AWS_REGION:-eu-central-1}
+      COGNITO_USER_POOL_ID: ${COGNITO_USER_POOL_ID}
+      COGNITO_APP_CLIENT_ID: ${COGNITO_APP_CLIENT_ID}
+      SQS_PROVISION_URL: ${SQS_PROVISION_URL}
+      SQS_DESTROY_URL: ${SQS_DESTROY_URL}
+      PROVISION_QUEUE: ${PROVISION_QUEUE:-orchestryx-provision-lab}
+      DESTROY_QUEUE: ${DESTROY_QUEUE:-orchestryx-destroy-lab}
+      CDK_INFRA_PATH: ${CDK_INFRA_PATH:-/infra}
+      WG_DNS: ${WG_DNS:-1.1.1.1}
+    volumes:
+      - ~/.aws:/root/.aws:ro
+      - ${CDK_INFRA_HOST_PATH:-../orchestryx-infra}:${CDK_INFRA_PATH:-/infra}:ro
+
+volumes:
+  postgres_data:

@@ -1,10 +1,14 @@
 import boto3
-from botocore.exceptions import ClientError
+from botocore.exceptions import BotoCoreError, ClientError
 from app.config import AWS_REGION, COGNITO_APP_CLIENT_ID
 
 
-# Connect to Cognito in our AWS region
-client = boto3.client("cognito-idp", region_name=AWS_REGION)
+def _get_cognito_client():
+    """Create a Cognito client with errors surfaced as safe user messages."""
+    try:
+        return boto3.client("cognito-idp", region_name=AWS_REGION)
+    except BotoCoreError as exc:
+        raise ValueError("Authentication service unavailable.") from exc
 
 
 def register_user(email: str, password: str) -> dict:
@@ -13,7 +17,8 @@ def register_user(email: str, password: str) -> dict:
     Cognito automatically sends a verification email.
     """
     try:
-        response = client.sign_up(
+        client = _get_cognito_client()
+        client.sign_up(
             ClientId=COGNITO_APP_CLIENT_ID,
             Username=email,
             Password=password,
@@ -35,6 +40,8 @@ def register_user(email: str, password: str) -> dict:
             raise ValueError("Invalid email or password format.")
         else:
             raise ValueError(f"Registration failed: {error}")
+    except BotoCoreError as e:
+        raise ValueError("Registration service unavailable.") from e
 
 
 def login_user(email: str, password: str) -> dict:
@@ -43,6 +50,7 @@ def login_user(email: str, password: str) -> dict:
     Returns JWT tokens on success.
     """
     try:
+        client = _get_cognito_client()
         response = client.initiate_auth(
             ClientId=COGNITO_APP_CLIENT_ID,
             AuthFlow="USER_PASSWORD_AUTH",
@@ -72,6 +80,8 @@ def login_user(email: str, password: str) -> dict:
             raise ValueError("No account found with this email.")
         else:
             raise ValueError(f"Login failed: {error}")
+    except BotoCoreError as e:
+        raise ValueError("Login service unavailable.") from e
 
 
 def confirm_email(email: str, code: str) -> dict:
@@ -80,6 +90,7 @@ def confirm_email(email: str, code: str) -> dict:
     sent by Cognito after registration.
     """
     try:
+        client = _get_cognito_client()
         client.confirm_sign_up(
             ClientId=COGNITO_APP_CLIENT_ID,
             Username=email,
@@ -96,6 +107,8 @@ def confirm_email(email: str, code: str) -> dict:
             raise ValueError("Verification code has expired. Please request a new one.")
         else:
             raise ValueError(f"Verification failed: {error}")
+    except BotoCoreError as e:
+        raise ValueError("Verification service unavailable.") from e
 
 
 def refresh_token(refresh_token: str) -> dict:
@@ -104,6 +117,7 @@ def refresh_token(refresh_token: str) -> dict:
     Called when the access token expires (after 1 hour).
     """
     try:
+        client = _get_cognito_client()
         response = client.initiate_auth(
             ClientId=COGNITO_APP_CLIENT_ID,
             AuthFlow="REFRESH_TOKEN_AUTH",
@@ -120,5 +134,7 @@ def refresh_token(refresh_token: str) -> dict:
             "token_type": "Bearer"
         }
 
-    except ClientError as e:
+    except ClientError:
         raise ValueError("Invalid or expired refresh token.")
+    except BotoCoreError as e:
+        raise ValueError("Token refresh service unavailable.") from e

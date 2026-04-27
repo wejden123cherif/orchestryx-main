@@ -1,6 +1,10 @@
+import logging
+from typing import Annotated
+
 from fastapi import APIRouter, HTTPException, Depends
-from jose import jwt
-from pydantic import BaseModel, EmailStr
+from jose import JWTError, jwt
+from pydantic import BaseModel, EmailStr, StringConstraints
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -8,27 +12,33 @@ from app.services.cognito import register_user, login_user, confirm_email, refre
 from app.services.user import get_or_create_user
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+logger = logging.getLogger(__name__)
 
 
 # ─── Request Schemas ───
 
+Password = Annotated[str, StringConstraints(min_length=8, max_length=128)]
+ConfirmationCode = Annotated[str, StringConstraints(min_length=4, max_length=16)]
+RefreshToken = Annotated[str, StringConstraints(min_length=20, max_length=4096)]
+
+
 class RegisterRequest(BaseModel):
     email: EmailStr
-    password: str
+    password: Password
 
 
 class LoginRequest(BaseModel):
     email: EmailStr
-    password: str
+    password: Password
 
 
 class ConfirmRequest(BaseModel):
     email: EmailStr
-    code: str
+    code: ConfirmationCode
 
 
 class RefreshRequest(BaseModel):
-    refresh_token: str
+    refresh_token: RefreshToken
 
 
 # ─── Routes ───
@@ -58,6 +68,13 @@ async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
         return tokens
     except ValueError as e:
         raise HTTPException(status_code=401, detail=str(e))
+    except (JWTError, KeyError):
+        logger.warning("Cognito login returned an unusable ID token")
+        raise HTTPException(status_code=502, detail="Authentication service returned an invalid token")
+    except SQLAlchemyError:
+        await db.rollback()
+        logger.exception("Database write failed while linking Cognito user")
+        raise HTTPException(status_code=500, detail="Database write failed")
 
 
 @router.post("/confirm")

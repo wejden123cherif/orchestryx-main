@@ -1,23 +1,26 @@
-from fastapi import FastAPI, Depends
+import logging
+
+from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from app.database import engine, Base, get_db
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.api import auth, catalog, labs
+from app.config import CORS_ALLOWED_ORIGINS
+from app.database import engine, Base, get_db
 from app.middleware.auth import get_current_user
-from app.models.lab_template import LabTemplate
-from app.models.user import User
+from app.models import LabInstance, LabTemplate, User
 from app.seeds import LAB_TEMPLATES
-import app.models.user
-import app.models.lab_template
-import app.models.lab_instance
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Orchestryx API")
 
 # Allow frontend to talk to backend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],  # frontend URL
+    allow_origins=CORS_ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -27,17 +30,21 @@ app.add_middleware(
 
 @app.on_event("startup")
 async def startup():
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
 
-    # Seed lab templates if table is empty
-    async with AsyncSession(engine) as session:
-        result = await session.execute(select(LabTemplate))
-        existing = result.scalars().all()
-        if not existing:
-            session.add_all(LAB_TEMPLATES)
-            await session.commit()
-            print(f"Seeded {len(LAB_TEMPLATES)} lab templates")
+        # Seed lab templates if table is empty.
+        async with AsyncSession(engine) as session:
+            result = await session.execute(select(LabTemplate))
+            existing = result.scalars().all()
+            if not existing:
+                session.add_all(LAB_TEMPLATES)
+                await session.commit()
+                logger.info("Seeded %s lab templates", len(LAB_TEMPLATES))
+    except SQLAlchemyError:
+        logger.exception("Database startup initialization failed")
+        raise
 
 app.include_router(auth.router)
 app.include_router(catalog.router)
@@ -50,13 +57,21 @@ async def health():
 
 @app.get("/me")
 async def me(user=Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    result = await db.execute(
-        select(User).where(User.cognito_sub == user["sub"])
-    )
-    db_user = result.scalar_one_or_none()
+    cognito_sub = user.get("sub")
+    if not cognito_sub:
+        raise HTTPException(status_code=401, detail="Invalid authentication token")
+
+    try:
+        result = await db.execute(
+            select(User).where(User.cognito_sub == cognito_sub)
+        )
+        db_user = result.scalar_one_or_none()
+    except SQLAlchemyError:
+        logger.exception("Database query failed while loading current user")
+        raise HTTPException(status_code=500, detail="Database query failed")
 
     if db_user is None:
-        return {"error": "User not found in database"}
+        raise HTTPException(status_code=404, detail="User not found in database")
 
     return {
         "id": db_user.id,

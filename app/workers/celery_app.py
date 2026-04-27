@@ -1,9 +1,11 @@
 from celery import Celery
-from app.config import SQS_PROVISION_URL, SQS_DESTROY_URL, AWS_REGION
-
-PROVISION_QUEUE = "orchestryx-provision-lab"
-DESTROY_QUEUE = "orchestryx-destroy-lab"
-ACCOUNT_ID = "254076817005"
+from app.config import (
+    AWS_REGION,
+    DESTROY_QUEUE,
+    PROVISION_QUEUE,
+    SQS_DESTROY_URL,
+    SQS_PROVISION_URL,
+)
 
 celery_app = Celery("orchestryx")
 
