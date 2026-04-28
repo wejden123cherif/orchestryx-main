@@ -14,6 +14,7 @@ import type {
 
 // Function reference used by the interceptor to read the current in-memory access token.
 let getAccessToken: (() => string | null) | null = null;
+let currentAccessToken: string | null = null;
 
 // Axios instance for all backend requests.
 export const api = axios.create({
@@ -31,9 +32,13 @@ export const setAccessTokenGetter = (
   getAccessToken = getter;
 };
 
+export const setAccessToken = (token: string | null): void => {
+  currentAccessToken = token;
+};
+
 // Attaches the latest in-memory bearer token to each request automatically.
 api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
-  const token = getAccessToken?.();
+  const token = currentAccessToken ?? getAccessToken?.() ?? null;
 
   if (token) {
     config.headers = config.headers ?? {};
@@ -136,9 +141,9 @@ export async function stopLab(instanceId: string): Promise<StopLabResponse> {
   return response.data;
 }
 
-export async function getLabConfig(instanceId: string): Promise<string> {
-  const response = await api.get<string>(`/labs/${instanceId}/config`, {
-    responseType: "text",
+export async function getLabConfig(instanceId: string): Promise<Blob> {
+  const response = await api.get<Blob>(`/labs/${instanceId}/config`, {
+    responseType: "blob",
   });
   return response.data;
 }

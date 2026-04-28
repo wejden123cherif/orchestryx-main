@@ -15,6 +15,7 @@ import {
   getLabConfig,
   stopLab,
 } from "@/lib/api";
+import { useAuth } from "@/hooks/useAuth";
 import type { ActiveLab } from "@/lib/types";
 import { cn, formatDateTime, getTimeRemaining } from "@/lib/utils";
 
@@ -33,42 +34,54 @@ function LabsSkeleton() {
 
 export default function LabsPage() {
   const { toast } = useToast();
+  const { isAuthReady, tokens } = useAuth();
   const [labs, setLabs] = useState<ActiveLab[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [actionId, setActionId] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const loadLabs = useCallback(async () => {
+    if (!isAuthReady || !tokens?.access_token) {
+      return;
+    }
+
     setIsLoading(true);
     setErrorMessage(null);
 
     try {
       setLabs(await getActiveLabs());
     } catch (error) {
+      console.error("Failed to load active labs", error);
       setErrorMessage(extractApiErrorMessage(error));
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [isAuthReady, tokens?.access_token]);
 
   useEffect(() => {
+    if (!isAuthReady || !tokens?.access_token) {
+      return;
+    }
+
     void Promise.resolve().then(loadLabs);
-  }, [loadLabs]);
+  }, [isAuthReady, loadLabs, tokens?.access_token]);
 
   const downloadConfig = async (instanceId: string) => {
     setActionId(instanceId);
 
     try {
-      const config = await getLabConfig(instanceId);
-      const blob = new Blob([config], { type: "text/plain;charset=utf-8" });
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = `${instanceId}.conf`;
-      anchor.click();
-      URL.revokeObjectURL(url);
+      const configBlob = await getLabConfig(instanceId);
+      const url = window.URL.createObjectURL(new Blob([configBlob]));
+      const link = document.createElement("a");
+      link.href = url;
+      link.setAttribute("download", `orchestryx-lab-${instanceId}.conf`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
       toast({ title: "VPN config downloaded", tone: "success" });
     } catch (error) {
+      console.error("Failed to download active lab config", error);
       toast({
         title: "Config unavailable",
         description: extractApiErrorMessage(error),
@@ -87,6 +100,7 @@ export default function LabsPage() {
       toast({ title: "Destroy requested", tone: "success" });
       await loadLabs();
     } catch (error) {
+      console.error("Failed to stop active lab", error);
       toast({
         title: "Destroy failed",
         description: extractApiErrorMessage(error),
@@ -117,7 +131,7 @@ export default function LabsPage() {
         </div>
       ) : null}
 
-      {isLoading ? (
+      {!isAuthReady || !tokens?.access_token || isLoading ? (
         <LabsSkeleton />
       ) : labs.length ? (
         <section className="app-card overflow-hidden">

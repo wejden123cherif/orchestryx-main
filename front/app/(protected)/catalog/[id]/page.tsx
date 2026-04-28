@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ArrowLeft, Clock3, Cpu, Database, WalletCards } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -37,7 +37,8 @@ function practiceItems(template: LabTemplate): string[] {
 
 export default function CatalogDetailPage() {
   const params = useParams<{ id: string }>();
-  const { user } = useAuth();
+  const router = useRouter();
+  const { user, isAuthReady, tokens } = useAuth();
   const { toast } = useToast();
   const [template, setTemplate] = useState<LabTemplate | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -45,21 +46,30 @@ export default function CatalogDetailPage() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const loadTemplate = useCallback(async () => {
+    if (!isAuthReady || !tokens?.access_token) {
+      return;
+    }
+
     setIsLoading(true);
     setErrorMessage(null);
 
     try {
       setTemplate(await getTemplate(params.id));
     } catch (error) {
+      console.error("Failed to load template details", error);
       setErrorMessage(extractApiErrorMessage(error));
     } finally {
       setIsLoading(false);
     }
-  }, [params.id]);
+  }, [isAuthReady, params.id, tokens?.access_token]);
 
   useEffect(() => {
+    if (!isAuthReady || !tokens?.access_token) {
+      return;
+    }
+
     void Promise.resolve().then(loadTemplate);
-  }, [loadTemplate]);
+  }, [isAuthReady, loadTemplate, tokens?.access_token]);
 
   const insufficientCredits = Boolean(
     template && (user?.credits_balance ?? 0) < template.credits_cost
@@ -78,7 +88,9 @@ export default function CatalogDetailPage() {
         description: `${result.template} is provisioning.`,
         tone: "success",
       });
+      router.push(`/labs/${result.instance_id}`);
     } catch (error) {
+      console.error("Failed to start lab from template detail", error);
       toast({
         title: "Unable to start lab",
         description: extractApiErrorMessage(error),
@@ -89,7 +101,7 @@ export default function CatalogDetailPage() {
     }
   };
 
-  if (isLoading) {
+  if (!isAuthReady || !tokens?.access_token || isLoading) {
     return (
       <div className="grid gap-6 lg:grid-cols-[minmax(0,0.6fr)_minmax(20rem,0.4fr)]">
         <div className="space-y-4">

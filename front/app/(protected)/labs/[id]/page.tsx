@@ -14,48 +14,96 @@ import {
   getLabStatus,
   stopLab,
 } from "@/lib/api";
+import { useAuth } from "@/hooks/useAuth";
 import type { LabStatusResponse } from "@/lib/types";
 import { cn, formatDateTime, getTimeRemaining, normalizeLabStatus } from "@/lib/utils";
 
 export default function LabDetailPage() {
   const params = useParams<{ id: string }>();
   const { toast } = useToast();
+  const { isAuthReady, tokens } = useAuth();
   const [lab, setLab] = useState<LabStatusResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isWorking, setIsWorking] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const loadLab = useCallback(async () => {
+    if (!isAuthReady || !tokens?.access_token) {
+      return null;
+    }
+
     setIsLoading(true);
-    setErrorMessage(null);
 
     try {
-      setLab(await getLabStatus(params.id));
+      const nextLab = await getLabStatus(params.id);
+      setLab(nextLab);
+      setErrorMessage(null);
+      return nextLab;
     } catch (error) {
+      console.error("Failed to load lab status", error);
       setErrorMessage(extractApiErrorMessage(error));
+      return null;
     } finally {
       setIsLoading(false);
     }
-  }, [params.id]);
+  }, [isAuthReady, params.id, tokens?.access_token]);
 
   useEffect(() => {
-    void Promise.resolve().then(loadLab);
-  }, [loadLab]);
+    if (!isAuthReady || !tokens?.access_token) {
+      return;
+    }
+
+    let isUnmounted = false;
+    let intervalId: ReturnType<typeof setInterval> | null = null;
+
+    const pollStatus = async () => {
+      if (isUnmounted) {
+        return;
+      }
+
+      const nextLab = await loadLab();
+      if (!nextLab) {
+        return;
+      }
+
+      const nextStatus = normalizeLabStatus(nextLab.status);
+      if (nextStatus === "DESTROYED" || nextStatus === "FAILED") {
+        if (intervalId) {
+          clearInterval(intervalId);
+          intervalId = null;
+        }
+      }
+    };
+
+    void Promise.resolve().then(pollStatus);
+    intervalId = setInterval(() => {
+      void Promise.resolve().then(pollStatus);
+    }, 5000);
+
+    return () => {
+      isUnmounted = true;
+      if (intervalId) {
+        clearInterval(intervalId);
+      }
+    };
+  }, [isAuthReady, loadLab, tokens?.access_token]);
 
   const downloadConfig = async () => {
     setIsWorking(true);
 
     try {
-      const config = await getLabConfig(params.id);
-      const blob = new Blob([config], { type: "text/plain;charset=utf-8" });
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = `${params.id}.conf`;
-      anchor.click();
-      URL.revokeObjectURL(url);
+      const configBlob = await getLabConfig(params.id);
+      const url = window.URL.createObjectURL(new Blob([configBlob]));
+      const link = document.createElement("a");
+      link.href = url;
+      link.setAttribute("download", `orchestryx-lab-${params.id}.conf`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
       toast({ title: "VPN config downloaded", tone: "success" });
     } catch (error) {
+      console.error("Failed to download VPN config", error);
       toast({
         title: "Config unavailable",
         description: extractApiErrorMessage(error),
@@ -74,6 +122,7 @@ export default function LabDetailPage() {
       toast({ title: "Destroy requested", tone: "success" });
       await loadLab();
     } catch (error) {
+      console.error("Failed to stop lab", error);
       toast({
         title: "Destroy failed",
         description: extractApiErrorMessage(error),
@@ -84,7 +133,7 @@ export default function LabDetailPage() {
     }
   };
 
-  if (isLoading) {
+  if (!isAuthReady || !tokens?.access_token || isLoading) {
     return (
       <div className="space-y-4">
         <Skeleton className="h-5 w-40" />
@@ -128,6 +177,20 @@ export default function LabDetailPage() {
           <Button type="button" variant="secondary" className="mt-6" onClick={loadLab}>
             Refresh status
           </Button>
+        </div>
+      </div>
+    );
+  }
+
+  if (status === "DESTROYING") {
+    return (
+      <div className="mx-auto max-w-xl py-10">
+        <div className="app-card p-8 text-center">
+          <StatusBadge status={lab.status} />
+          <h1 className="mt-5 text-3xl text-foreground">Destroying lab</h1>
+          <p className="mt-3 text-sm text-muted-foreground">
+            Teardown is in progress. This page updates automatically.
+          </p>
         </div>
       </div>
     );
