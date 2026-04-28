@@ -1,0 +1,183 @@
+"use client";
+
+import Link from "next/link";
+import type { Route } from "next";
+import { useCallback, useEffect, useState } from "react";
+import { Download, Server, Square } from "lucide-react";
+import { EmptyState } from "@/components/platform/empty-state";
+import { StatusBadge } from "@/components/platform/status-badge";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
+import { useToast } from "@/components/ui/toast";
+import {
+  extractApiErrorMessage,
+  getActiveLabs,
+  getLabConfig,
+  stopLab,
+} from "@/lib/api";
+import type { ActiveLab } from "@/lib/types";
+import { cn, formatDateTime, getTimeRemaining } from "@/lib/utils";
+
+function LabsSkeleton() {
+  return (
+    <div className="space-y-3">
+      {Array.from({ length: 4 }).map((_, index) => (
+        <div key={index} className="app-card p-4">
+          <Skeleton className="h-5 w-64" />
+          <Skeleton className="mt-3 h-4 w-2/3" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+export default function LabsPage() {
+  const { toast } = useToast();
+  const [labs, setLabs] = useState<ActiveLab[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [actionId, setActionId] = useState<string | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  const loadLabs = useCallback(async () => {
+    setIsLoading(true);
+    setErrorMessage(null);
+
+    try {
+      setLabs(await getActiveLabs());
+    } catch (error) {
+      setErrorMessage(extractApiErrorMessage(error));
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void Promise.resolve().then(loadLabs);
+  }, [loadLabs]);
+
+  const downloadConfig = async (instanceId: string) => {
+    setActionId(instanceId);
+
+    try {
+      const config = await getLabConfig(instanceId);
+      const blob = new Blob([config], { type: "text/plain;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `${instanceId}.conf`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+      toast({ title: "VPN config downloaded", tone: "success" });
+    } catch (error) {
+      toast({
+        title: "Config unavailable",
+        description: extractApiErrorMessage(error),
+        tone: "error",
+      });
+    } finally {
+      setActionId(null);
+    }
+  };
+
+  const stop = async (instanceId: string) => {
+    setActionId(instanceId);
+
+    try {
+      await stopLab(instanceId);
+      toast({ title: "Destroy requested", tone: "success" });
+      await loadLabs();
+    } catch (error) {
+      toast({
+        title: "Destroy failed",
+        description: extractApiErrorMessage(error),
+        tone: "error",
+      });
+    } finally {
+      setActionId(null);
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <h1 className="text-3xl text-foreground">My Labs</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Active environments, access config, and lifecycle controls.
+          </p>
+        </div>
+        <Button type="button" variant="secondary" onClick={loadLabs} disabled={isLoading}>
+          Refresh
+        </Button>
+      </header>
+
+      {errorMessage ? (
+        <div className="rounded-lg border border-destructive/35 bg-destructive/10 px-4 py-3 text-sm text-red-300">
+          {errorMessage}
+        </div>
+      ) : null}
+
+      {isLoading ? (
+        <LabsSkeleton />
+      ) : labs.length ? (
+        <section className="app-card overflow-hidden">
+          {labs.map((lab, index) => (
+            <div
+              key={lab.instance_id}
+              className={cn(
+                "grid gap-4 border-b border-border p-4 last:border-b-0 lg:grid-cols-[1.4fr_0.7fr_0.7fr_0.9fr_auto] lg:items-center",
+                index % 2 === 1 && "bg-secondary/35"
+              )}
+            >
+              <Link href={`/labs/${lab.instance_id}` as Route} className="min-w-0">
+                <p className="mono truncate text-sm text-foreground">{lab.instance_id}</p>
+                <p className="mt-1 truncate text-sm text-muted-foreground">
+                  Template {lab.template_id}
+                </p>
+              </Link>
+              <StatusBadge status={lab.status} />
+              <span className="text-sm text-muted-foreground">{getTimeRemaining(lab.expires_at)}</span>
+              <span className="text-sm text-muted-foreground">{formatDateTime(lab.started_at)}</span>
+              <div className="flex flex-wrap gap-2 lg:justify-end">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="secondary"
+                  disabled={actionId === lab.instance_id}
+                  onClick={() => downloadConfig(lab.instance_id)}
+                >
+                  <Download className="h-3.5 w-3.5" />
+                  VPN Config
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="danger"
+                  disabled={actionId === lab.instance_id}
+                  onClick={() => stop(lab.instance_id)}
+                >
+                  <Square className="h-3.5 w-3.5" />
+                  Stop
+                </Button>
+              </div>
+            </div>
+          ))}
+        </section>
+      ) : (
+        <EmptyState
+          icon={Server}
+          title="No active lab environments"
+          description="Start a template from the catalog. This view will show status, time remaining, VPN config, and stop actions."
+          action={
+            <Link
+              href="/catalog"
+              className={cn(buttonVariants.primary, "inline-flex h-10 items-center rounded-lg px-4 text-sm")}
+            >
+              Browse catalog
+            </Link>
+          }
+        />
+      )}
+    </div>
+  );
+}
