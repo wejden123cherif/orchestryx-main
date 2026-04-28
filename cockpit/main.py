@@ -306,6 +306,127 @@ def get_costs() -> dict:
         }
 
 
+def get_ec2_instances() -> list[dict]:
+    try:
+        ec2 = boto("ec2")
+        resp = ec2.describe_instances(
+            Filters=[
+                {"Name": "vpc-id", "Values": [VPC_ID]},
+                {"Name": "instance-state-name", "Values": ["running", "stopped", "pending"]},
+            ]
+        )
+        instances = []
+        for reservation in resp.get("Reservations", []):
+            for inst in reservation.get("Instances", []):
+                name_tag = next(
+                    (t["Value"] for t in inst.get("Tags", []) if t["Key"] == "Name"), ""
+                )
+                instances.append({
+                    "id": inst["InstanceId"],
+                    "name": name_tag or inst["InstanceId"],
+                    "type": inst.get("InstanceType", "—"),
+                    "state": inst["State"]["Name"],
+                    "private_ip": inst.get("PrivateIpAddress", "—"),
+                    "public_ip": inst.get("PublicIpAddress", "—"),
+                    "az": inst.get("Placement", {}).get("AvailabilityZone", "—"),
+                    "launched": utc(inst.get("LaunchTime")),
+                    "image_id": inst.get("ImageId", "—"),
+                    "subnet": inst.get("SubnetId", "—"),
+                })
+        return instances
+    except Exception:
+        return []
+
+
+def get_cloudwatch_alarms_summary() -> dict:
+    try:
+        cw = boto("cloudwatch")
+        firing_resp = cw.describe_alarms(StateValue="ALARM")
+        firing = [
+            {
+                "name": a.get("AlarmName", "—"),
+                "state": a.get("StateValue", "—"),
+                "metric": a.get("MetricName", "—"),
+                "namespace": a.get("Namespace", "—"),
+                "reason": (a.get("StateReason", "") or "")[:150],
+                "updated": utc(a.get("StateUpdatedTimestamp")),
+            }
+            for a in firing_resp.get("MetricAlarms", [])
+        ]
+        return {"firing": len(firing), "alarms": firing}
+    except Exception:
+        return {"firing": 0, "alarms": []}
+
+
+def get_all_cloudwatch_alarms() -> list[dict]:
+    try:
+        cw = boto("cloudwatch")
+        resp = cw.describe_alarms()
+        alarms = []
+        for a in resp.get("MetricAlarms", []):
+            alarms.append({
+                "name": a.get("AlarmName", "—"),
+                "state": a.get("StateValue", "—"),
+                "metric": a.get("MetricName", "—"),
+                "namespace": a.get("Namespace", "—"),
+                "threshold": str(a.get("Threshold", "—")),
+                "comparison": a.get("ComparisonOperator", "—").replace("GreaterThanOrEqualToThreshold", ">=").replace("GreaterThanThreshold", ">").replace("LessThanOrEqualToThreshold", "<=").replace("LessThanThreshold", "<"),
+                "reason": (a.get("StateReason", "") or "")[:150],
+                "updated": utc(a.get("StateUpdatedTimestamp")),
+            })
+        return sorted(alarms, key=lambda x: (x["state"] != "ALARM", x["state"] != "INSUFFICIENT_DATA"))
+    except Exception:
+        return []
+
+
+def get_billing_detail() -> dict:
+    import calendar as cal
+    try:
+        ce = boto3.client("ce", region_name="us-east-1")
+        today = datetime.now(timezone.utc).date()
+        month_start = today.replace(day=1)
+        last_day = cal.monthrange(today.year, today.month)[1]
+        month_end = today.replace(day=last_day)
+
+        daily_resp = ce.get_cost_and_usage(
+            TimePeriod={"Start": month_start.isoformat(), "End": today.isoformat()},
+            Granularity="DAILY",
+            Metrics=["UnblendedCost"],
+        )
+        daily = [
+            {
+                "date": entry["TimePeriod"]["Start"],
+                "amount": round(float(entry["Total"]["UnblendedCost"]["Amount"]), 4),
+            }
+            for entry in daily_resp.get("ResultsByTime", [])
+        ]
+        mtd = round(sum(d["amount"] for d in daily), 2)
+
+        forecast = None
+        if today < month_end:
+            try:
+                fc_resp = ce.get_cost_forecast(
+                    TimePeriod={"Start": today.isoformat(), "End": month_end.isoformat()},
+                    Metric="UNBLENDED_COST",
+                    Granularity="MONTHLY",
+                )
+                remaining = float(fc_resp["Total"]["Amount"])
+                forecast = round(mtd + remaining, 2)
+            except Exception:
+                pass
+
+        return {
+            "month": month_start.strftime("%B %Y"),
+            "month_start": month_start.isoformat(),
+            "today": today.isoformat(),
+            "mtd": mtd,
+            "forecast": forecast,
+            "daily": daily,
+        }
+    except Exception:
+        return {"month": "—", "mtd": 0, "forecast": None, "daily": []}
+
+
 # ── routes ────────────────────────────────────────────────────────────────────
 
 @app.get("/")
@@ -350,6 +471,8 @@ def overview() -> dict[str, Any]:
         "costs": get_costs(),
         "secrets": {"runtime_env": SECRET_ARN},
         "stacks": get_stacks(),
+        "alarms": get_cloudwatch_alarms_summary(),
+        "ec2": get_ec2_instances(),
     }
 
 
@@ -500,3 +623,15 @@ def destroy_stack(name: str):
         return {"ok": True, "message": f"Deletion initiated for {name}"}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/api/billing")
+def billing() -> dict[str, Any]:
+    basic = get_costs()
+    detail = get_billing_detail()
+    return {**basic, **detail}
+
+
+@app.get("/api/alarms")
+def alarms_route() -> dict[str, Any]:
+    return {"alarms": get_all_cloudwatch_alarms()}
