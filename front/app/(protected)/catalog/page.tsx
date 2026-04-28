@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { Boxes, Search } from "lucide-react";
 import { EmptyState } from "@/components/platform/empty-state";
 import { TemplateCard } from "@/components/platform/template-card";
@@ -9,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/components/ui/toast";
 import { extractApiErrorMessage, getCatalog, startLab } from "@/lib/api";
+import { useAuth } from "@/hooks/useAuth";
 import type { CatalogFilter, LabTemplate } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -33,7 +35,9 @@ function CatalogSkeleton() {
 }
 
 export default function CatalogPage() {
+  const router = useRouter();
   const { toast } = useToast();
+  const { isAuthReady, tokens } = useAuth();
   const [templates, setTemplates] = useState<LabTemplate[]>([]);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<CatalogFilter>("All");
@@ -42,21 +46,30 @@ export default function CatalogPage() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const loadCatalog = useCallback(async () => {
+    if (!isAuthReady || !tokens?.access_token) {
+      return;
+    }
+
     setIsLoading(true);
     setErrorMessage(null);
 
     try {
       setTemplates(await getCatalog());
     } catch (error) {
+      console.error("Failed to load catalog", error);
       setErrorMessage(extractApiErrorMessage(error));
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [isAuthReady, tokens?.access_token]);
 
   useEffect(() => {
+    if (!isAuthReady || !tokens?.access_token) {
+      return;
+    }
+
     void Promise.resolve().then(loadCatalog);
-  }, [loadCatalog]);
+  }, [isAuthReady, loadCatalog, tokens?.access_token]);
 
   const filteredTemplates = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
@@ -86,7 +99,9 @@ export default function CatalogPage() {
         description: `${result.template} is provisioning.`,
         tone: "success",
       });
+      router.push(`/labs/${result.instance_id}`);
     } catch (error) {
+      console.error("Failed to start lab", error);
       toast({
         title: "Unable to start lab",
         description: extractApiErrorMessage(error),
@@ -144,7 +159,7 @@ export default function CatalogPage() {
         </div>
       ) : null}
 
-      {isLoading ? (
+      {!isAuthReady || !tokens?.access_token || isLoading ? (
         <CatalogSkeleton />
       ) : filteredTemplates.length ? (
         <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">

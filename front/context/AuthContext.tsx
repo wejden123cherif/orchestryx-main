@@ -8,7 +8,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { setAccessTokenGetter } from "@/lib/api";
+import { setAccessToken, setAccessTokenGetter } from "@/lib/api";
 import {
   confirmUser,
   getCurrentUser,
@@ -53,8 +53,12 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
   // Keeps axios interceptor synchronized with the latest access token.
   useEffect(() => {
-    setAccessTokenGetter(() => tokens?.access_token ?? null);
+    const accessToken = tokens?.access_token ?? null;
+    setAccessToken(accessToken);
+    setAccessTokenGetter(() => accessToken);
+
     return () => {
+      setAccessToken(null);
       setAccessTokenGetter(null);
     };
   }, [tokens]);
@@ -70,7 +74,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
     try {
       const profile = await getCurrentUser();
       setUser(profile);
-    } catch {
+    } catch (error) {
+      console.error("Failed to load user profile", error);
       setTokens(null);
       setUser(null);
     } finally {
@@ -85,6 +90,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
   const login = useCallback(async (payload: EmailPasswordPayload) => {
     const nextTokens = await loginUser(payload);
+    setAccessToken(nextTokens.access_token);
     setTokens(nextTokens);
   }, []);
 
@@ -104,11 +110,13 @@ export function AuthProvider({ children }: AuthProviderProps) {
     const nextTokens = await refreshTokens({
       refresh_token: tokens.refresh_token,
     });
+    setAccessToken(nextTokens.access_token);
     setTokens(nextTokens);
   }, [tokens]);
 
   // Clears all auth information from memory and session UI state.
   const logout = useCallback(() => {
+    setAccessToken(null);
     setTokens(null);
     setUser(null);
   }, []);
