@@ -17,6 +17,7 @@
       "assumeRolePolicyDocument": "scripts/aws/iam/ecs-task-trust-policy.json",
       "managedPolicyArns": [
         "arn:aws:iam::aws:policy/AmazonCognitoPowerUser",
+        "arn:aws:iam::aws:policy/AmazonSQSFullAccess",
         "arn:aws:iam::aws:policy/SecretsManagerReadWrite"
       ]
     },

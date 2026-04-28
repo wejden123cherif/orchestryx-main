@@ -6,6 +6,7 @@ import type {
   EmailPasswordPayload,
   LabStatusResponse,
   LabTemplate,
+  CustomLabTopology,
   RefreshPayload,
   StartLabResponse,
   StopLabResponse,
@@ -127,6 +128,15 @@ export async function getActiveLabs(): Promise<ActiveLab[]> {
 export async function startLab(templateId: string): Promise<StartLabResponse> {
   const response = await api.post<StartLabResponse>("/labs/start", {
     template_id: templateId,
+  });
+  return response.data;
+}
+
+export async function startCustomLab(
+  topology: CustomLabTopology
+): Promise<StartLabResponse> {
+  const response = await api.post<StartLabResponse>("/labs/start", {
+    custom_topology: topology,
   });
   return response.data;
 }

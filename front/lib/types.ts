@@ -96,3 +96,80 @@ export type CatalogFilter =
   | "Active Directory"
   | "DFIR"
   | "Malware";
+
+export type BuilderCategory =
+  | "Attacker Machines"
+  | "Target Machines"
+  | "Network Devices"
+  | "Services";
+
+export type BuilderNodeKind = "machine" | "network-device" | "service";
+
+export interface SoftwareConfig {
+  name: string;
+  version: string;
+  cves: string[];
+}
+
+export type MachineNodeData = {
+  label: string;
+  os: string;
+  version: string;
+  ip: string;
+  ports: number[];
+  cves: string[];
+  isFlag: boolean;
+  flagValue: string;
+  software: SoftwareConfig[];
+  kind: BuilderNodeKind;
+  icon: string;
+};
+
+export interface BuilderMachineTemplate {
+  id: string;
+  category: BuilderCategory;
+  label: string;
+  os: string;
+  version: string;
+  kind: BuilderNodeKind;
+  icon: string;
+  ports: number[];
+  software: SoftwareConfig[];
+}
+
+export type ConnectionProtocol = "TCP" | "UDP" | "ICMP";
+export type ConnectionAction = "allow" | "deny";
+export type ConnectionDirection = "bidirectional" | "unidirectional";
+
+export interface ConnectionRule {
+  protocol: ConnectionProtocol;
+  action: ConnectionAction;
+  ports: number[];
+  direction: ConnectionDirection;
+}
+
+export type BuilderEdgeData = {
+  label: string;
+  rules: ConnectionRule[];
+};
+
+export interface CustomLabTopology {
+  id: string;
+  name: string;
+  description: string;
+  category: string;
+  difficulty: string;
+  estimated_cost_per_hour: number;
+  estimated_credits: number;
+  machines: Array<{
+    id: string;
+    position: { x: number; y: number };
+    data: MachineNodeData;
+  }>;
+  connections: Array<{
+    id: string;
+    source: string;
+    target: string;
+    data: BuilderEdgeData;
+  }>;
+}

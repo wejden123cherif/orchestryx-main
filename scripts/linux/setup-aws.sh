@@ -345,6 +345,7 @@ ensure_policy_attached "${EXECUTION_ROLE}" "arn:aws:iam::aws:policy/SecretsManag
 
 ensure_role "${API_TASK_ROLE}"
 ensure_policy_attached "${API_TASK_ROLE}" "arn:aws:iam::aws:policy/AmazonCognitoPowerUser"
+ensure_policy_attached "${API_TASK_ROLE}" "arn:aws:iam::aws:policy/AmazonSQSFullAccess"
 ensure_policy_attached "${API_TASK_ROLE}" "arn:aws:iam::aws:policy/SecretsManagerReadWrite"
 
 ensure_role "${WORKER_TASK_ROLE}"

@@ -21,6 +21,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY apps ./apps
+COPY workers ./workers
 
 EXPOSE 8000
 

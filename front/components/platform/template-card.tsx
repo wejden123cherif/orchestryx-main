@@ -55,7 +55,7 @@ export function TemplateCard({
         disabled={isStarting}
         onClick={() => onStart(template.id)}
       >
-        {isStarting ? "Starting..." : "Launch lab"}
+        {isStarting ? "Starting..." : "Start Lab"}
       </Button>
     </article>
   );

@@ -2,9 +2,27 @@
 
 import type { Route } from "next";
 import type { ReactNode } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Boxes, Cloud, CreditCard, LayoutDashboard, LogOut, Server, UserRound } from "lucide-react";
+import { motion } from "framer-motion";
+import {
+  Boxes,
+  Cloud,
+  CreditCard,
+  GitBranch,
+  LayoutDashboard,
+  LogOut,
+  Menu,
+  Server,
+  UserRound,
+} from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { useAuth } from "@/hooks/useAuth";
 import { cn } from "@/lib/utils";
 
@@ -17,14 +35,50 @@ type NavItem = {
 const navItems: NavItem[] = [
   { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
   { label: "Catalog", href: "/catalog", icon: Boxes },
+  { label: "Lab Builder", href: "/builder" as Route, icon: GitBranch },
   { label: "My Labs", href: "/labs", icon: Server },
   { label: "Account", href: "/account", icon: UserRound },
 ];
+
+function SidebarNav({
+  pathname,
+  onNavigate,
+}: {
+  pathname: string;
+  onNavigate?: () => void;
+}) {
+  return (
+    <nav className="flex-1 space-y-1 p-3" aria-label="Primary navigation">
+      {navItems.map((item) => {
+        const Icon = item.icon;
+        const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
+
+        return (
+          <Link
+            key={item.href}
+            href={item.href}
+            onClick={onNavigate}
+            className={cn(
+              "flex h-10 items-center gap-3 rounded-lg px-3 text-sm",
+              active
+                ? "bg-secondary text-foreground"
+                : "text-muted-foreground hover:bg-secondary hover:text-foreground"
+            )}
+          >
+            <Icon className={cn("h-4 w-4", active && "text-primary")} />
+            {item.label}
+          </Link>
+        );
+      })}
+    </nav>
+  );
+}
 
 export function ProtectedShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const { user, logout } = useAuth();
+  const [mobileOpen, setMobileOpen] = useState(false);
 
   const handleLogout = () => {
     logout();
@@ -41,28 +95,7 @@ export function ProtectedShell({ children }: { children: ReactNode }) {
           <span className="text-sm font-medium">Orchestryx</span>
         </div>
 
-        <nav className="flex-1 space-y-1 p-3" aria-label="Primary navigation">
-          {navItems.map((item) => {
-            const Icon = item.icon;
-            const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
-
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                className={cn(
-                  "flex h-10 items-center gap-3 rounded-lg px-3 text-sm",
-                  active
-                    ? "bg-secondary text-foreground"
-                    : "text-muted-foreground hover:bg-secondary hover:text-foreground"
-                )}
-              >
-                <Icon className={cn("h-4 w-4", active && "text-primary")} />
-                {item.label}
-              </Link>
-            );
-          })}
-        </nav>
+        <SidebarNav pathname={pathname} />
 
         <div className="border-t border-border p-3">
           <div className="rounded-xl border border-border bg-card p-3">
@@ -91,25 +124,46 @@ export function ProtectedShell({ children }: { children: ReactNode }) {
             <Cloud className="h-4 w-4 text-primary" />
             Orchestryx
           </Link>
-          <nav className="flex items-center gap-1">
-            {navItems.map((item) => {
-              const Icon = item.icon;
-              return (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  className="rounded-lg p-2 text-muted-foreground hover:bg-secondary hover:text-foreground"
-                  aria-label={item.label}
-                >
-                  <Icon className="h-4 w-4" />
-                </Link>
-              );
-            })}
-          </nav>
+          <button
+            type="button"
+            onClick={() => setMobileOpen(true)}
+            className="rounded-lg p-2 text-muted-foreground hover:bg-secondary hover:text-foreground"
+            aria-label="Open navigation"
+          >
+            <Menu className="h-5 w-5" />
+          </button>
         </header>
-        <main className="page-transition mx-auto min-h-screen max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
+        <Dialog open={mobileOpen} onOpenChange={setMobileOpen}>
+          <DialogContent className="left-0 top-0 h-screen w-[min(22rem,100vw)] max-w-none translate-x-0 translate-y-0 rounded-none border-y-0 border-l-0 p-0">
+            <DialogHeader className="border-b border-border p-4">
+              <DialogTitle className="flex items-center gap-2 text-sm">
+                <Cloud className="h-4 w-4 text-primary" />
+                Orchestryx
+              </DialogTitle>
+            </DialogHeader>
+            <SidebarNav pathname={pathname} onNavigate={() => setMobileOpen(false)} />
+            <div className="border-t border-border p-3">
+              <p className="truncate text-sm text-foreground">{user?.email ?? "Signed in"}</p>
+              <button
+                type="button"
+                onClick={handleLogout}
+                className="mt-3 flex h-10 w-full items-center gap-2 rounded-lg px-3 text-sm text-muted-foreground hover:bg-secondary hover:text-foreground"
+              >
+                <LogOut className="h-4 w-4" />
+                Logout
+              </button>
+            </div>
+          </DialogContent>
+        </Dialog>
+        <motion.main
+          key={pathname}
+          initial={{ opacity: 0, y: 6 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.18, ease: "easeOut" }}
+          className="mx-auto min-h-screen max-w-7xl px-4 py-6 sm:px-6 lg:px-8"
+        >
           {children}
-        </main>
+        </motion.main>
       </div>
     </div>
   );

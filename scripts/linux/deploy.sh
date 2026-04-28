@@ -14,6 +14,8 @@ ECR_API="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/orchestryx-api"
 ECR_WORKER="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/orchestryx-worker"
 API_SERVICE="orchestryx-api-service"
 WORKER_SERVICE="orchestryx-worker-service"
+API_TASK_ROLE="orchestryx-api-task-role"
+API_SQS_POLICY_ARN="arn:aws:iam::aws:policy/AmazonSQSFullAccess"
 
 TARGET="${1:-all}"
 
@@ -35,7 +37,28 @@ login_ecr() {
     | docker login --username AWS --password-stdin "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
 }
 
+ensure_api_sqs_policy() {
+  local attached
+
+  attached="$(aws iam list-attached-role-policies \
+    --role-name "${API_TASK_ROLE}" \
+    --query "length(AttachedPolicies[?PolicyArn=='${API_SQS_POLICY_ARN}'])" \
+    --output text)"
+
+  if [[ "${attached}" != "0" ]]; then
+    echo "API task role already has SQS policy attached."
+    return
+  fi
+
+  echo "Attaching SQS policy to ${API_TASK_ROLE}..."
+  aws iam attach-role-policy \
+    --role-name "${API_TASK_ROLE}" \
+    --policy-arn "${API_SQS_POLICY_ARN}"
+}
+
 deploy_api() {
+  ensure_api_sqs_policy
+
   echo "Building API image..."
   docker build -f Dockerfile -t orchestryx-api:latest .
 

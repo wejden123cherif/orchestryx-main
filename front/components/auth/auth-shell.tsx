@@ -3,6 +3,7 @@
 import type { ReactNode } from "react";
 import type { Route } from "next";
 import Link from "next/link";
+import { motion } from "framer-motion";
 import { Cloud } from "lucide-react";
 
 type AuthShellProps = {
@@ -31,7 +32,12 @@ export function AuthShell({
         <span className="text-sm font-medium text-foreground">Orchestryx</span>
       </Link>
 
-      <div className="app-card p-6 sm:p-7">
+      <motion.div
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.2, ease: "easeOut" }}
+        className="app-card p-6 sm:p-7"
+      >
         <div>
           <h1 className="text-2xl text-foreground">{title}</h1>
           <p className="mt-2 text-sm text-muted-foreground">{description}</p>
@@ -45,7 +51,7 @@ export function AuthShell({
             {altLabel}
           </Link>
         </div>
-      </div>
+      </motion.div>
 
       <footer className="mt-8 text-center text-xs text-muted-foreground">
         Orchestryx © 2026

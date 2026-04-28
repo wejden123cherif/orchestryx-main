@@ -24,6 +24,8 @@ $EcrApi = "$Registry/orchestryx-api"
 $EcrWorker = "$Registry/orchestryx-worker"
 $ApiService = "orchestryx-api-service"
 $WorkerService = "orchestryx-worker-service"
+$ApiTaskRole = "orchestryx-api-task-role"
+$ApiSqsPolicyArn = "arn:aws:iam::aws:policy/AmazonSQSFullAccess"
 
 function Assert-Command {
     param([string]$Name)
@@ -38,7 +40,26 @@ function Login-Ecr {
         docker login --username AWS --password-stdin $Registry
 }
 
+function Ensure-ApiSqsPolicy {
+    $attached = aws iam list-attached-role-policies `
+        --role-name $ApiTaskRole `
+        --query "length(AttachedPolicies[?PolicyArn=='$ApiSqsPolicyArn'])" `
+        --output text
+
+    if ($attached -ne "0") {
+        Write-Host "API task role already has SQS policy attached."
+        return
+    }
+
+    Write-Host "Attaching SQS policy to $ApiTaskRole..."
+    aws iam attach-role-policy `
+        --role-name $ApiTaskRole `
+        --policy-arn $ApiSqsPolicyArn
+}
+
 function Deploy-Api {
+    Ensure-ApiSqsPolicy
+
     Write-Host "Building API image..."
     docker build -f Dockerfile -t orchestryx-api:latest .
 

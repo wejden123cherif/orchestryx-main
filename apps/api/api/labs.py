@@ -162,10 +162,12 @@ async def start_lab(
         logger.exception("Database write failed while creating lab instance")
         raise HTTPException(status_code=500, detail="Database write failed")
 
-    # Dispatch Celery provisioning task to SQS
-    from workers.provision import provision_lab
-
     try:
+        # Dispatch Celery provisioning task to SQS. Keep the import inside the
+        # compensation block so image/package regressions do not leave active
+        # rows without queued work.
+        from workers.provision import provision_lab
+
         provision_lab.delay(
             instance_id=instance.id,
             template_id=template.id,
@@ -280,10 +282,11 @@ async def stop_lab(
         logger.exception("Database write failed while marking lab for teardown")
         raise HTTPException(status_code=500, detail="Database write failed")
 
-    # Dispatch Celery destroy task to SQS
-    from workers.destroy import destroy_lab
-
     try:
+        # Dispatch Celery teardown task to SQS. Importing here keeps task
+        # packaging failures recoverable by restoring the previous status.
+        from workers.destroy import destroy_lab
+
         destroy_lab.delay(
             instance_id=instance.id,
             cfn_stack_name=instance.cfn_stack_name or f"orchestryx-lab-{instance.id}",

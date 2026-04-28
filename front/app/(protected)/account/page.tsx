@@ -60,9 +60,11 @@ export default function AccountPage() {
               <Mail className="h-4 w-4 text-primary" />
               <div className="min-w-0">
                 <p className="text-sm text-muted-foreground">Email</p>
-                <p className="truncate text-sm text-foreground">
-                  {isLoadingUser ? "Loading..." : (user?.email ?? "Unavailable")}
-                </p>
+                {isLoadingUser ? (
+                  <Skeleton className="mt-1 h-4 w-48" />
+                ) : (
+                  <p className="truncate text-sm text-foreground">{user?.email ?? "Unavailable"}</p>
+                )}
               </div>
             </div>
             <div className="flex items-center gap-3 rounded-lg border border-border bg-secondary/50 p-3">
@@ -78,9 +80,11 @@ export default function AccountPage() {
               <UserRound className="h-4 w-4 text-primary" />
               <div>
                 <p className="text-sm text-muted-foreground">Plan</p>
-                <p className="text-sm text-foreground">
-                  {isLoadingUser ? "Loading..." : (user?.subscription_tier ?? "Standard")}
-                </p>
+                {isLoadingUser ? (
+                  <Skeleton className="mt-1 h-4 w-24" />
+                ) : (
+                  <p className="text-sm text-foreground">{user?.subscription_tier ?? "Standard"}</p>
+                )}
               </div>
             </div>
           </div>

@@ -8,6 +8,7 @@ import { PasswordField } from "@/components/auth/password-field";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/hooks/useAuth";
 import { extractApiErrorMessage } from "@/lib/api";
 
@@ -116,7 +117,7 @@ function LoginForm() {
 
 export default function LoginPage() {
   return (
-    <Suspense fallback={<div className="text-sm text-muted-foreground">Loading...</div>}>
+    <Suspense fallback={<Skeleton className="mx-auto mt-40 h-80 w-[min(420px,calc(100vw-2.5rem))]" />}>
       <LoginForm />
     </Suspense>
   );

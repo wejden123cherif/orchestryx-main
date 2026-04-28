@@ -294,6 +294,7 @@ Ensure-PolicyAttached $ExecutionRole "arn:aws:iam::aws:policy/SecretsManagerRead
 
 Ensure-Role $ApiTaskRole
 Ensure-PolicyAttached $ApiTaskRole "arn:aws:iam::aws:policy/AmazonCognitoPowerUser"
+Ensure-PolicyAttached $ApiTaskRole "arn:aws:iam::aws:policy/AmazonSQSFullAccess"
 Ensure-PolicyAttached $ApiTaskRole "arn:aws:iam::aws:policy/SecretsManagerReadWrite"
 
 Ensure-Role $WorkerTaskRole
