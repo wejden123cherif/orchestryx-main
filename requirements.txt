@@ -10,7 +10,7 @@ email-validator==2.3.0
 python-dotenv==1.2.2
 python-jose==3.5.0
 requests==2.33.1
-pycurl==7.45.3
+pycurl
 
 # Database
 SQLAlchemy==2.0.49
