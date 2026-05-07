@@ -32,4 +32,11 @@ celery_app.conf.update(
     result_serializer="json",
     timezone="UTC",
     enable_utc=True,
+    beat_schedule={
+        "destroy-expired-labs-every-5-minutes": {
+            "task": "workers.destroy.destroy_expired_labs",
+            "schedule": 300.0,
+            "options": {"queue": DESTROY_QUEUE},
+        },
+    },
 )

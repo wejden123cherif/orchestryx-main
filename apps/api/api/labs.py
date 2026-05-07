@@ -1,4 +1,6 @@
 from datetime import datetime, timedelta, timezone
+import hashlib
+import hmac
 import logging
 from typing import Annotated
 
@@ -14,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from apps.api.config import AWS_REGION
 from apps.api.database import get_db
 from apps.api.middleware.auth import get_current_user
+from apps.api.models.lab_flag import LabFlag
 from apps.api.models.lab_instance import LabInstance
 from apps.api.models.lab_template import LabTemplate
 from apps.api.models.user import User
@@ -27,6 +30,55 @@ LAB_STATUS_DESTROYING = "DESTROYING"
 LAB_STATUS_FAILED = "FAILED"
 
 ACTIVE_LAB_STATUSES = [LAB_STATUS_PROVISIONING, LAB_STATUS_RUNNING]
+
+
+def _normalize_challenge_path(path: str | None) -> str:
+    if path is None:
+        return ""
+
+    normalized = path.strip()
+    if normalized == "" or normalized == "/":
+        return ""
+    if not normalized.startswith("/"):
+        normalized = "/" + normalized
+    return normalized
+
+
+def _build_challenge_url(instance: LabInstance, template: LabTemplate | None) -> str | None:
+    if instance.status != LAB_STATUS_RUNNING or template is None:
+        return None
+
+    return (
+        f"http://10.8.0.1:{template.challenge_port}"
+        f"{_normalize_challenge_path(template.challenge_path)}"
+    )
+
+
+def _hash_flag(flag: str) -> str:
+    # Normalize surrounding whitespace before hashing so accidental spaces from
+    # copy/paste do not make a correct flag fail validation.
+    return hashlib.sha256(flag.strip().encode()).hexdigest()
+
+
+def _is_correct_flag(
+    submitted_flag: str,
+    instance: LabInstance,
+    lab_flag: LabFlag | None,
+) -> bool:
+    # Hash the user submission and compare hashes instead of storing or
+    # comparing plain-text template flags.
+    submitted_hash = _hash_flag(submitted_flag)
+
+    # hmac.compare_digest avoids timing leaks during hash comparison.
+    if lab_flag is not None and hmac.compare_digest(submitted_hash, lab_flag.flag_hash):
+        return True
+
+    # The provisioning worker currently injects this per-instance value into
+    # custom challenge containers as the FLAG environment variable.
+    dynamic_flag_hash = _hash_flag(f"ORCHESTRYX{{{instance.id}}}")
+    return hmac.compare_digest(submitted_hash, dynamic_flag_hash)
+
+
 STOPPABLE_LAB_STATUSES = [LAB_STATUS_PROVISIONING, LAB_STATUS_RUNNING]
 TEMPLATE_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_-]*$"
 INSTANCE_ID_PATTERN = (
@@ -46,6 +98,12 @@ TemplateId = Annotated[
 
 class StartLabRequest(BaseModel):
     template_id: TemplateId
+
+
+class SubmitFlagRequest(BaseModel):
+    # The flag input is intentionally bounded so a malformed request cannot
+    # send an arbitrarily large body into the hash/compare path.
+    flag: Annotated[str, StringConstraints(min_length=1, max_length=256)]
 
 
 def _claims_sub(user_claims: dict) -> str:
@@ -216,12 +274,28 @@ async def get_active_labs(
         logger.exception("Database query failed while loading active labs")
         raise HTTPException(status_code=500, detail="Database query failed")
 
+    template_ids = {instance.template_id for instance in instances}
+    template_by_id: dict[str, LabTemplate] = {}
+    if template_ids:
+        try:
+            template_result = await db.execute(
+                select(LabTemplate).where(LabTemplate.id.in_(template_ids))
+            )
+            template_by_id = {
+                template.id: template
+                for template in template_result.scalars().all()
+            }
+        except SQLAlchemyError:
+            logger.exception("Database query failed while loading active lab templates")
+            raise HTTPException(status_code=500, detail="Database query failed")
+
     return [
         {
             "instance_id": i.id,
             "template_id": i.template_id,
             "status": i.status,
             "ec2_public_ip": i.ec2_public_ip,
+            "challenge_url": _build_challenge_url(i, template_by_id.get(i.template_id)),
             "expires_at": i.expires_at,
             "started_at": i.started_at,
         }
@@ -242,11 +316,21 @@ async def get_lab_status(
     db_user = await _get_current_db_user(db, _claims_sub(user))
     instance = await _get_owned_instance(db, instance_id, db_user.id)
 
+    try:
+        result = await db.execute(
+            select(LabTemplate).where(LabTemplate.id == instance.template_id)
+        )
+        template = result.scalar_one_or_none()
+    except SQLAlchemyError:
+        logger.exception("Database query failed while loading lab template for status")
+        template = None
+
     return {
         "instance_id": instance.id,
         "status": instance.status,
         "template_id": instance.template_id,
         "ec2_public_ip": instance.ec2_public_ip,
+        "challenge_url": _build_challenge_url(instance, template),
         "expires_at": instance.expires_at,
         "started_at": instance.started_at,
         "flag_submitted": instance.flag_submitted,
@@ -356,3 +440,72 @@ async def get_lab_config(
             ),
         },
     )
+
+
+@router.post("/{instance_id}/flag")
+async def submit_flag(
+    body: SubmitFlagRequest,
+    instance_id: str = Path(..., pattern=INSTANCE_ID_PATTERN),
+    user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Validate a submitted lab flag and mark the instance complete.
+
+    Stored template flags are SHA-256 hashes. Current custom Docker labs also
+    receive ORCHESTRYX{instance_id} from the provisioning worker, so that
+    dynamic value is accepted without saving the plain flag in the database.
+    """
+    db_user = await _get_current_db_user(db, _claims_sub(user))
+    instance = await _get_owned_instance(db, instance_id, db_user.id)
+
+    # Only running labs can be completed. This prevents users from submitting
+    # flags against failed, destroyed, or still-provisioning sessions.
+    if instance.status != LAB_STATUS_RUNNING:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot submit a flag for a lab with status {instance.status}",
+        )
+
+    # Re-submitting an already accepted flag is idempotent for smoother UI
+    # retries and page refreshes.
+    if instance.flag_submitted:
+        return {
+            "correct": True,
+            "flag_submitted": True,
+            "message": "Flag already submitted.",
+        }
+
+    try:
+        result = await db.execute(
+            select(LabFlag).where(LabFlag.template_id == instance.template_id)
+        )
+        lab_flag = result.scalar_one_or_none()
+    except SQLAlchemyError:
+        logger.exception("Database query failed while loading lab flag")
+        raise HTTPException(status_code=500, detail="Database query failed")
+
+    # Incorrect submissions are normal user mistakes, so return 200 with a
+    # clear result instead of treating them as API errors.
+    if not _is_correct_flag(body.flag, instance, lab_flag):
+        return {
+            "correct": False,
+            "flag_submitted": False,
+            "message": "Incorrect flag.",
+        }
+
+    # Persist the completion marker on the lab instance. The status remains
+    # RUNNING so the student can keep using the environment until TTL/Stop Lab.
+    instance.flag_submitted = True
+    try:
+        await db.commit()
+    except SQLAlchemyError:
+        await db.rollback()
+        logger.exception("Database write failed while submitting flag")
+        raise HTTPException(status_code=500, detail="Database write failed")
+
+    return {
+        "correct": True,
+        "flag_submitted": True,
+        "message": "Flag accepted.",
+    }

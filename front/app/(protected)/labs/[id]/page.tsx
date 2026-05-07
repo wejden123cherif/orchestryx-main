@@ -2,8 +2,9 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
+import type { FormEvent } from "react";
 import { useCallback, useEffect, useState } from "react";
-import { ArrowLeft, Download, Network, Square } from "lucide-react";
+import { ArrowLeft, CheckCircle2, Download, ExternalLink, Flag, Network, Square } from "lucide-react";
 import { StatusBadge } from "@/components/platform/status-badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -13,6 +14,7 @@ import {
   getLabConfig,
   getLabStatus,
   stopLab,
+  submitLabFlag,
 } from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
 import type { LabStatusResponse } from "@/lib/types";
@@ -25,6 +27,8 @@ export default function LabDetailPage() {
   const [lab, setLab] = useState<LabStatusResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isWorking, setIsWorking] = useState(false);
+  const [flagInput, setFlagInput] = useState("");
+  const [isSubmittingFlag, setIsSubmittingFlag] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const loadLab = useCallback(async () => {
@@ -130,6 +134,60 @@ export default function LabDetailPage() {
       });
     } finally {
       setIsWorking(false);
+    }
+  };
+
+  const submitFlag = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    // Trim the pasted flag before sending it; users often copy a trailing
+    // newline from terminal output or a web page.
+    const submittedFlag = flagInput.trim();
+    if (!submittedFlag) {
+      toast({
+        title: "Flag required",
+        description: "Paste the flag you found in the lab.",
+        tone: "error",
+      });
+      return;
+    }
+
+    setIsSubmittingFlag(true);
+
+    try {
+      // The backend owns correctness checks because it can compare against
+      // hashed template flags and dynamic per-instance flags securely.
+      const result = await submitLabFlag(params.id, submittedFlag);
+
+      // Wrong flags are expected during practice, so they show as user
+      // feedback instead of throwing the page into an error state.
+      if (!result.correct) {
+        toast({
+          title: "Incorrect flag",
+          description: result.message,
+          tone: "error",
+        });
+        return;
+      }
+
+      // Refresh status after acceptance so the completion marker updates in
+      // the Lab info panel without requiring a manual page refresh.
+      toast({
+        title: "Flag accepted",
+        description: result.message,
+        tone: "success",
+      });
+      setFlagInput("");
+      await loadLab();
+    } catch (error) {
+      console.error("Failed to submit flag", error);
+      toast({
+        title: "Flag submission failed",
+        description: extractApiErrorMessage(error),
+        tone: "error",
+      });
+    } finally {
+      setIsSubmittingFlag(false);
     }
   };
 
@@ -249,6 +307,22 @@ export default function LabDetailPage() {
                 <p className="mono mt-1 text-sm text-foreground">{lab.ec2_public_ip ?? "Pending"}</p>
               </div>
               <div className="rounded-lg border border-border bg-secondary/50 p-3">
+                <p className="text-sm text-muted-foreground">Challenge URL</p>
+                {lab.challenge_url ? (
+                  <a
+                    href={lab.challenge_url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="mono mt-1 flex min-w-0 items-center gap-1.5 truncate text-sm text-primary hover:text-[#818cf8]"
+                  >
+                    <span className="truncate">{lab.challenge_url}</span>
+                    <ExternalLink className="h-3.5 w-3.5 shrink-0" />
+                  </a>
+                ) : (
+                  <p className="mt-1 text-sm text-foreground">Connect VPN first</p>
+                )}
+              </div>
+              <div className="rounded-lg border border-border bg-secondary/50 p-3">
                 <p className="text-sm text-muted-foreground">Started</p>
                 <p className="mt-1 text-sm text-foreground">{formatDateTime(lab.started_at)}</p>
               </div>
@@ -268,6 +342,40 @@ export default function LabDetailPage() {
             <p className="mt-3 text-sm leading-7 text-muted-foreground">
               Download the generated configuration, import it into WireGuard, and connect before accessing lab resources. Keep the configuration private and destroy the lab when finished.
             </p>
+          </div>
+
+          <div className="app-card p-6">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg border border-border bg-secondary text-primary">
+                {lab.flag_submitted ? <CheckCircle2 className="h-5 w-5" /> : <Flag className="h-5 w-5" />}
+              </div>
+              <div>
+                <h2 className="text-xl text-foreground">Submit flag</h2>
+                <p className="text-sm text-muted-foreground">
+                  {lab.flag_submitted ? "Challenge completed" : "Paste the flag from the lab environment."}
+                </p>
+              </div>
+            </div>
+
+            {/* Completion is a lab-instance property, so the form locks after
+                a correct flag while keeping the lab itself running. */}
+            <form className="mt-5 flex flex-col gap-3 sm:flex-row" onSubmit={submitFlag}>
+              <input
+                value={flagInput}
+                onChange={(event) => setFlagInput(event.target.value)}
+                disabled={lab.flag_submitted || isSubmittingFlag}
+                placeholder="ORCHESTRYX{...}"
+                className="h-11 min-w-0 flex-1 rounded-lg border border-border bg-background px-3 text-sm text-foreground outline-none transition focus:border-primary disabled:cursor-not-allowed disabled:opacity-60"
+              />
+              <Button
+                type="submit"
+                disabled={lab.flag_submitted || isSubmittingFlag}
+                className="sm:w-36"
+              >
+                <Flag className="h-4 w-4" />
+                Submit
+              </Button>
+            </form>
           </div>
         </div>
 

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Route } from "next";
-import { Download, Server, Square, WalletCards } from "lucide-react";
+import { Download, ExternalLink, Server, Square, WalletCards } from "lucide-react";
 import { EmptyState } from "@/components/platform/empty-state";
 import { StatusBadge } from "@/components/platform/status-badge";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -206,6 +206,20 @@ export default function DashboardPage() {
                   <StatusBadge status={lab.status} />
                   <span className="text-muted-foreground">{getTimeRemaining(lab.expires_at)}</span>
                   <div className="flex flex-wrap gap-2 md:justify-end">
+                    {lab.challenge_url ? (
+                      <a
+                        href={lab.challenge_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className={cn(
+                          buttonVariants.secondary,
+                          "inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-lg px-3 text-xs font-medium"
+                        )}
+                      >
+                        <ExternalLink className="h-3.5 w-3.5" />
+                        Open
+                      </a>
+                    ) : null}
                     <Button
                       type="button"
                       size="sm"

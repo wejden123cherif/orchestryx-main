@@ -41,6 +41,8 @@ export interface LabTemplate {
   credits_cost: number;
   ttl_hours: number;
   instance_type: string;
+  challenge_port: number;
+  challenge_path: string;
 }
 
 export type LabStatus =
@@ -67,6 +69,7 @@ export interface ActiveLab {
   template_id: string;
   status: LabStatus;
   ec2_public_ip: string | null;
+  challenge_url: string | null;
   expires_at: string;
   started_at: string;
 }
@@ -86,6 +89,14 @@ export interface LabStatusResponse extends ActiveLab {
 export interface StopLabResponse {
   instance_id: string;
   status: string;
+  message: string;
+}
+
+// Response from POST /labs/{instance_id}/flag. A wrong flag is returned as a
+// normal response so the UI can show feedback without entering an error state.
+export interface SubmitFlagResponse {
+  correct: boolean;
+  flag_submitted: boolean;
   message: string;
 }
 

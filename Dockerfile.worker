@@ -24,4 +24,4 @@ COPY apps ./apps
 COPY workers ./workers
 COPY infra ./infra
 
-CMD ["celery", "-A", "workers.celery_app", "worker", "--loglevel=info", "--pool=solo", "-I", "workers.provision,workers.destroy"]
+CMD ["celery", "-A", "workers.celery_app", "worker", "--loglevel=info", "--pool=solo", "--beat", "-I", "workers.provision,workers.destroy"]

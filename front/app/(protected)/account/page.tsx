@@ -1,7 +1,9 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { CalendarDays, CreditCard, Mail, UserRound } from "lucide-react";
+import type { Route } from "next";
+import { CalendarDays, CreditCard, ExternalLink, Mail, UserRound } from "lucide-react";
 import { StatusBadge } from "@/components/platform/status-badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/hooks/useAuth";
@@ -39,6 +41,7 @@ export default function AccountPage() {
         date: lab.started_at,
         label: `Lab ${lab.template_id}`,
         status: lab.status,
+        challengeUrl: lab.challenge_url,
       })),
     [labs]
   );
@@ -127,9 +130,22 @@ export default function AccountPage() {
         ) : usageRows.length ? (
           <div className="divide-y divide-border">
             {usageRows.map((row) => (
-              <div key={row.id} className="grid gap-3 px-5 py-4 text-sm md:grid-cols-[1fr_1fr_auto] md:items-center">
-                <span className="text-foreground">{row.label}</span>
+              <div key={row.id} className="grid gap-3 px-5 py-4 text-sm md:grid-cols-[1fr_1fr_auto_auto] md:items-center">
+                <Link href={`/labs/${row.id}` as Route} className="text-foreground hover:text-indigo-200">
+                  {row.label}
+                </Link>
                 <span className="text-muted-foreground">{formatDateTime(row.date)}</span>
+                {row.challengeUrl ? (
+                  <a
+                    href={row.challengeUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1.5 text-primary hover:text-[#818cf8]"
+                  >
+                    <ExternalLink className="h-3.5 w-3.5" />
+                    Open
+                  </a>
+                ) : null}
                 <StatusBadge status={row.status} />
               </div>
             ))}

@@ -10,6 +10,7 @@ import type {
   RefreshPayload,
   StartLabResponse,
   StopLabResponse,
+  SubmitFlagResponse,
   UserProfile,
 } from "@/lib/types";
 
@@ -154,6 +155,18 @@ export async function stopLab(instanceId: string): Promise<StopLabResponse> {
 export async function getLabConfig(instanceId: string): Promise<Blob> {
   const response = await api.get<Blob>(`/labs/${instanceId}/config`, {
     responseType: "blob",
+  });
+  return response.data;
+}
+
+export async function submitLabFlag(
+  instanceId: string,
+  flag: string
+): Promise<SubmitFlagResponse> {
+  // Sends the student's recovered flag to the backend for hash-based
+  // validation. The UI never decides correctness locally.
+  const response = await api.post<SubmitFlagResponse>(`/labs/${instanceId}/flag`, {
+    flag,
   });
   return response.data;
 }

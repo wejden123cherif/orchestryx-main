@@ -41,6 +41,8 @@ async def get_catalog(
             "credits_cost": t.credits_cost,
             "ttl_hours": t.ttl_hours,
             "instance_type": t.instance_type,
+            "challenge_port": t.challenge_port,
+            "challenge_path": t.challenge_path,
         }
         for t in templates
     ]
@@ -85,4 +87,6 @@ async def get_template(
         "credits_cost": template.credits_cost,
         "ttl_hours": template.ttl_hours,
         "instance_type": template.instance_type,
+        "challenge_port": template.challenge_port,
+        "challenge_path": template.challenge_path,
     }

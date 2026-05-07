@@ -134,6 +134,8 @@ def provision_lab(self, instance_id: str, template_id: str, user_id: str):
 
                 docker_image = template.docker_image_uri
                 instance_type = template.instance_type
+                challenge_port = template.challenge_port
+                challenge_path = template.challenge_path
         except SQLAlchemyError as exc:
             raise RuntimeError("Database query failed before provisioning") from exc
 
@@ -166,6 +168,10 @@ def provision_lab(self, instance_id: str, template_id: str, user_id: str):
                     f"flag={flag}",
                     "--context",
                     f"instance_type={instance_type}",
+                    "--context",
+                    f"challenge_port={challenge_port}",
+                    "--context",
+                    f"challenge_path={challenge_path}",
                 ],
                 cwd=infra_path,
                 timeout=600,

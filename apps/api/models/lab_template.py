@@ -39,6 +39,11 @@ class LabTemplate(Base):
     # t3.small for most labs, t3.medium for Windows (EternalBlue)
     instance_type = Column(String, nullable=False, default="t3.small")
 
+    # Where the lab challenge is reachable from inside the WireGuard VPN.
+    # The host and container port are the same for current single-container labs.
+    challenge_port = Column(Integer, nullable=False, default=3000)
+    challenge_path = Column(String, nullable=False, default="/")
+
     # Whether this lab appears in the catalog
     # Set to False to hide a lab without deleting it
     is_active = Column(Boolean, nullable=False, default=True)
