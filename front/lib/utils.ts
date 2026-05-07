@@ -74,3 +74,8 @@ export function getProvisioningStage(status: string, progress: number): string {
   if (normalized === "EXPIRED") return "Expired";
   return "Failed";
 }
+
+export function getVpnConfigFilename(instanceId: string): string {
+  const shortId = instanceId.replace(/[^a-zA-Z0-9]/g, "").slice(0, 8) || "lab";
+  return `ox-${shortId.toLowerCase()}.conf`;
+}

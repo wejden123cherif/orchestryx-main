@@ -5,6 +5,7 @@ import type {
   AdminOverview,
   AdminUser,
   AuthTokens,
+  AwsOverview,
   ConfirmPayload,
   CreditTransaction,
   EmailPasswordPayload,
@@ -220,5 +221,17 @@ export async function getAdminEvents(): Promise<LabEvent[]> {
 
 export async function getAdminCreditTransactions(): Promise<CreditTransaction[]> {
   const response = await api.get<CreditTransaction[]>("/admin/credits");
+  return response.data;
+}
+
+export async function getAdminAwsOverview(): Promise<AwsOverview> {
+  const response = await api.get<AwsOverview>("/admin/aws/overview");
+  return response.data;
+}
+
+export async function getAdminAwsLogs(service: "api" | "worker"): Promise<string> {
+  const response = await api.get<string>(`/admin/aws/logs/${service}`, {
+    responseType: "text",
+  });
   return response.data;
 }

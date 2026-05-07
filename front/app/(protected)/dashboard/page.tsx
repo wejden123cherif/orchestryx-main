@@ -18,7 +18,13 @@ import {
   stopLab,
 } from "@/lib/api";
 import type { ActiveLab, LabTemplate } from "@/lib/types";
-import { cn, getProvisioningStage, getTimeRemaining, normalizeLabStatus } from "@/lib/utils";
+import {
+  cn,
+  getProvisioningStage,
+  getTimeRemaining,
+  getVpnConfigFilename,
+  normalizeLabStatus,
+} from "@/lib/utils";
 
 function StatCard({ label, value }: { label: string; value: string }) {
   return (
@@ -98,7 +104,7 @@ export default function DashboardPage() {
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
       anchor.href = url;
-      anchor.download = `${instanceId}.conf`;
+      anchor.download = getVpnConfigFilename(instanceId);
       anchor.click();
       URL.revokeObjectURL(url);
       toast({ title: "VPN config downloaded", tone: "success" });

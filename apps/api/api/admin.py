@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Path
+from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, StringConstraints
 from sqlalchemy import func, select
 from sqlalchemy.exc import SQLAlchemyError
@@ -15,6 +16,7 @@ from apps.api.models.lab_event import LabEvent
 from apps.api.models.lab_instance import LabInstance
 from apps.api.models.lab_template import LabTemplate
 from apps.api.models.user import User
+from apps.api.services.aws_monitoring import get_aws_overview, get_recent_logs
 from apps.api.services.lab_lifecycle import (
     ACTIVE_LAB_STATUSES,
     LAB_STATUS_DESTROYING,
@@ -350,3 +352,21 @@ async def list_lab_events(
         }
         for event in events
     ]
+
+
+@router.get("/aws/overview")
+async def admin_aws_overview(
+    _: User = Depends(require_admin),
+):
+    return get_aws_overview()
+
+
+@router.get("/aws/logs/{service}", response_class=PlainTextResponse)
+async def admin_aws_logs(
+    service: str,
+    _: User = Depends(require_admin),
+):
+    try:
+        return get_recent_logs(service)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc

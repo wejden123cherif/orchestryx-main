@@ -22,6 +22,7 @@ import {
   formatDateTime,
   getProvisioningStage,
   getTimeRemaining,
+  getVpnConfigFilename,
   normalizeLabStatus,
 } from "@/lib/utils";
 
@@ -80,7 +81,7 @@ export default function LabsPage() {
       const url = window.URL.createObjectURL(new Blob([configBlob]));
       const link = document.createElement("a");
       link.href = url;
-      link.setAttribute("download", `orchestryx-lab-${instanceId}.conf`);
+      link.setAttribute("download", getVpnConfigFilename(instanceId));
       document.body.appendChild(link);
       link.click();
       link.remove();

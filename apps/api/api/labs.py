@@ -68,6 +68,11 @@ def _hash_flag(flag: str) -> str:
     return hashlib.sha256(flag.strip().encode()).hexdigest()
 
 
+def _vpn_config_filename(instance_id: str) -> str:
+    short_id = "".join(character for character in instance_id if character.isalnum())[:8]
+    return f"ox-{short_id.lower() or 'lab'}.conf"
+
+
 def _is_correct_flag(
     submitted_flag: str,
     instance: LabInstance,
@@ -591,7 +596,7 @@ async def get_lab_config(
         config,
         headers={
             "Content-Disposition": (
-                f"attachment; filename=orchestryx-lab-{instance_id}.conf"
+                f"attachment; filename={_vpn_config_filename(instance_id)}"
             ),
         },
     )

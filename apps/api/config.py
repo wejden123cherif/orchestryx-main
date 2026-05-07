@@ -73,3 +73,16 @@ LAB_PROVISION_TIMEOUT_SECONDS = _int("LAB_PROVISION_TIMEOUT_SECONDS", 900)
 LAB_STARTUP_RETRY_SECONDS = _int("LAB_STARTUP_RETRY_SECONDS", 30)
 LAB_CLEANUP_STUCK_AFTER_SECONDS = _int("LAB_CLEANUP_STUCK_AFTER_SECONDS", 1200)
 LAB_RETENTION_DAYS = _int("LAB_RETENTION_DAYS", 14)
+
+# AWS monitoring defaults. These mirror the local cockpit defaults but can be
+# overridden per environment so the admin console is not tied to one account.
+AWS_ACCOUNT_ID = _optional("AWS_ACCOUNT_ID", "")
+AWS_ECS_CLUSTER = _optional("AWS_ECS_CLUSTER", "orchestryx")
+AWS_API_SERVICE = _optional("AWS_API_SERVICE", "orchestryx-api-service")
+AWS_WORKER_SERVICE = _optional("AWS_WORKER_SERVICE", "orchestryx-worker-service")
+AWS_AURORA_CLUSTER = _optional("AWS_AURORA_CLUSTER", "orchestryx-db")
+AWS_COGNITO_POOL_ID = _optional("AWS_COGNITO_POOL_ID", COGNITO_USER_POOL_ID)
+AWS_API_LOG_GROUP = _optional("AWS_API_LOG_GROUP", "/ecs/orchestryx-api")
+AWS_WORKER_LOG_GROUP = _optional("AWS_WORKER_LOG_GROUP", "/ecs/orchestryx-worker")
+AWS_ECR_API_REPOSITORY = _optional("AWS_ECR_API_REPOSITORY", "orchestryx-api")
+AWS_ECR_WORKER_REPOSITORY = _optional("AWS_ECR_WORKER_REPOSITORY", "orchestryx-worker")

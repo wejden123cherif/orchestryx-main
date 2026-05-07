@@ -183,6 +183,156 @@ export interface CreditTransaction {
   created_at: string;
 }
 
+export interface AwsOverview {
+  region: string;
+  cluster: string;
+  ecs: {
+    api: AwsEcsService;
+    worker: AwsEcsService;
+    tasks: AwsTask[];
+  };
+  sqs: {
+    provision: AwsQueue;
+    destroy: AwsQueue;
+  };
+  aurora: {
+    id: string;
+    status: string;
+    engine?: string;
+    engine_version?: string;
+    endpoint?: string;
+    reader_endpoint?: string;
+    multi_az?: boolean;
+    azs?: string[];
+    error?: string;
+  };
+  cognito: {
+    id: string;
+    name?: string;
+    status: string;
+    estimated_users?: number;
+    mfa?: string;
+    created_at?: string;
+    error?: string;
+  };
+  ecr: {
+    api: AwsEcrImage;
+    worker: AwsEcrImage;
+  };
+  logs: {
+    api: AwsLogGroup;
+    worker: AwsLogGroup;
+  };
+  cloudformation: {
+    lab_stacks: AwsStack[];
+  };
+  ec2: {
+    lab_instances: AwsInstance[];
+  };
+  alarms: {
+    firing: number;
+    alarms: AwsAlarm[];
+    status?: string;
+    error?: string;
+  };
+  costs: {
+    status: string;
+    period: string;
+    total: number;
+    currency: string;
+    services: Array<{ service: string; amount: number }>;
+    error?: string;
+  };
+}
+
+export interface AwsEcsService {
+  name: string;
+  status: string;
+  desired?: number;
+  running?: number;
+  pending?: number;
+  task_definition?: string;
+  rollout_state?: string | null;
+  updated_at?: string | null;
+  events?: Array<{ created_at: string | null; message: string }>;
+  error?: string;
+}
+
+export interface AwsTask {
+  id?: string;
+  service?: string;
+  last_status?: string;
+  desired_status?: string;
+  cpu?: string;
+  memory?: string;
+  private_ip?: string | null;
+  started_at?: string | null;
+  task_definition?: string;
+  status?: string;
+  error?: string;
+}
+
+export interface AwsQueue {
+  name: string;
+  url?: string;
+  queued?: number;
+  in_flight?: number;
+  oldest_age_seconds?: number;
+  status?: string;
+  error?: string;
+}
+
+export interface AwsEcrImage {
+  repository: string;
+  status: string;
+  pushed_at?: string | null;
+  size_mb?: number;
+  digest?: string;
+  tags?: string[];
+  error?: string;
+}
+
+export interface AwsLogGroup {
+  name: string;
+  stored_mb?: number;
+  retention_days?: number | null;
+  latest_stream?: string | null;
+  latest_event_at?: string | null;
+  status?: string;
+  error?: string;
+}
+
+export interface AwsStack {
+  name?: string;
+  status: string;
+  created_at?: string | null;
+  updated_at?: string | null;
+  error?: string;
+}
+
+export interface AwsInstance {
+  id?: string;
+  name?: string;
+  lab_instance_id?: string;
+  state?: string;
+  type?: string;
+  public_ip?: string | null;
+  private_ip?: string | null;
+  az?: string;
+  launched_at?: string | null;
+  status?: string;
+  error?: string;
+}
+
+export interface AwsAlarm {
+  name?: string;
+  state?: string;
+  metric?: string;
+  namespace?: string;
+  reason?: string;
+  updated_at?: string | null;
+}
+
 export type CatalogFilter =
   | "All"
   | "Web"

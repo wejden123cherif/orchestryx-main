@@ -37,6 +37,15 @@ services:
       LAB_STARTUP_RETRY_SECONDS: ${LAB_STARTUP_RETRY_SECONDS:-30}
       LAB_CLEANUP_STUCK_AFTER_SECONDS: ${LAB_CLEANUP_STUCK_AFTER_SECONDS:-1200}
       LAB_RETENTION_DAYS: ${LAB_RETENTION_DAYS:-14}
+      AWS_ECS_CLUSTER: ${AWS_ECS_CLUSTER:-orchestryx}
+      AWS_API_SERVICE: ${AWS_API_SERVICE:-orchestryx-api-service}
+      AWS_WORKER_SERVICE: ${AWS_WORKER_SERVICE:-orchestryx-worker-service}
+      AWS_AURORA_CLUSTER: ${AWS_AURORA_CLUSTER:-orchestryx-db}
+      AWS_COGNITO_POOL_ID: ${AWS_COGNITO_POOL_ID:-}
+      AWS_API_LOG_GROUP: ${AWS_API_LOG_GROUP:-/ecs/orchestryx-api}
+      AWS_WORKER_LOG_GROUP: ${AWS_WORKER_LOG_GROUP:-/ecs/orchestryx-worker}
+      AWS_ECR_API_REPOSITORY: ${AWS_ECR_API_REPOSITORY:-orchestryx-api}
+      AWS_ECR_WORKER_REPOSITORY: ${AWS_ECR_WORKER_REPOSITORY:-orchestryx-worker}
     volumes:
       - ~/.aws:/root/.aws:ro
 
@@ -64,6 +73,15 @@ services:
       LAB_STARTUP_RETRY_SECONDS: ${LAB_STARTUP_RETRY_SECONDS:-30}
       LAB_CLEANUP_STUCK_AFTER_SECONDS: ${LAB_CLEANUP_STUCK_AFTER_SECONDS:-1200}
       LAB_RETENTION_DAYS: ${LAB_RETENTION_DAYS:-14}
+      AWS_ECS_CLUSTER: ${AWS_ECS_CLUSTER:-orchestryx}
+      AWS_API_SERVICE: ${AWS_API_SERVICE:-orchestryx-api-service}
+      AWS_WORKER_SERVICE: ${AWS_WORKER_SERVICE:-orchestryx-worker-service}
+      AWS_AURORA_CLUSTER: ${AWS_AURORA_CLUSTER:-orchestryx-db}
+      AWS_COGNITO_POOL_ID: ${AWS_COGNITO_POOL_ID:-}
+      AWS_API_LOG_GROUP: ${AWS_API_LOG_GROUP:-/ecs/orchestryx-api}
+      AWS_WORKER_LOG_GROUP: ${AWS_WORKER_LOG_GROUP:-/ecs/orchestryx-worker}
+      AWS_ECR_API_REPOSITORY: ${AWS_ECR_API_REPOSITORY:-orchestryx-api}
+      AWS_ECR_WORKER_REPOSITORY: ${AWS_ECR_WORKER_REPOSITORY:-orchestryx-worker}
     volumes:
       - ~/.aws:/root/.aws:ro
 
