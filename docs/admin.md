@@ -24,7 +24,7 @@ Non-admin users receive `403 Admin access required`.
 
 The admin console is not a replacement for AWS observability. Use it for Orchestryx-owned state and quick intervention; use CloudWatch, CloudFormation, ECS, SQS, and Secrets Manager for low-level AWS diagnostics.
 
-The AWS overlay uses the API container's AWS credentials. If it shows degraded cards, verify task role permissions for ECS, SQS, RDS, Cognito, ECR, Logs, CloudFormation, EC2, CloudWatch, and Cost Explorer. Resource names are configured with `AWS_ECS_CLUSTER`, `AWS_API_SERVICE`, `AWS_WORKER_SERVICE`, `AWS_AURORA_CLUSTER`, `AWS_API_LOG_GROUP`, `AWS_WORKER_LOG_GROUP`, `AWS_ECR_API_REPOSITORY`, and `AWS_ECR_WORKER_REPOSITORY`.
+The AWS overlay uses the API container's AWS credentials. If it shows degraded cards, verify task role permissions for ECS, SQS, RDS, Cognito, ECR, Logs, CloudFormation, EC2, ELBv2, Application Auto Scaling, Secrets Manager, IAM read operations, CloudWatch, and Cost Explorer. Resource names are configured with `AWS_ECS_CLUSTER`, `AWS_API_SERVICE`, `AWS_WORKER_SERVICE`, `AWS_AURORA_CLUSTER`, `AWS_API_LOG_GROUP`, `AWS_WORKER_LOG_GROUP`, `AWS_ECR_API_REPOSITORY`, `AWS_ECR_WORKER_REPOSITORY`, and optional `AWS_VPC_ID`.
 
 For initial local admin access, set a user row to admin:
 

@@ -229,6 +229,44 @@ export interface AwsOverview {
   ec2: {
     lab_instances: AwsInstance[];
   };
+  network: {
+    vpcs: AwsVpc[];
+    subnets: AwsSubnet[];
+    security_groups: AwsSecurityGroup[];
+    route_tables: AwsRouteTable[];
+    status?: string;
+    error?: string;
+  };
+  load_balancing: {
+    load_balancers: AwsLoadBalancer[];
+    target_groups: AwsTargetGroup[];
+    target_health: AwsTargetHealth[];
+    status?: string;
+    error?: string;
+  };
+  autoscaling: {
+    groups: AwsAutoScalingGroup[];
+    ecs_scaling_targets: AwsEcsScalingTarget[];
+    status?: string;
+    error?: string;
+  };
+  secrets: {
+    items: AwsSecret[];
+    count: number;
+    status?: string;
+    error?: string;
+  };
+  iam: {
+    roles: AwsIamRole[];
+    status?: string;
+    error?: string;
+  };
+  metrics: {
+    ecs: Record<string, Record<string, AwsMetricPoint>> & {
+      status?: string;
+      error?: string;
+    };
+  };
   alarms: {
     firing: number;
     alarms: AwsAlarm[];
@@ -331,6 +369,105 @@ export interface AwsAlarm {
   namespace?: string;
   reason?: string;
   updated_at?: string | null;
+}
+
+export interface AwsVpc {
+  id?: string;
+  cidr?: string;
+  state?: string;
+  is_default?: boolean;
+}
+
+export interface AwsSubnet {
+  id?: string;
+  vpc_id?: string;
+  az?: string;
+  cidr?: string;
+  available_ips?: number;
+  public_ip_on_launch?: boolean;
+}
+
+export interface AwsSecurityGroup {
+  id?: string;
+  name?: string;
+  description?: string;
+  vpc_id?: string;
+  ingress_rules?: number;
+  egress_rules?: number;
+}
+
+export interface AwsRouteTable {
+  id?: string;
+  vpc_id?: string;
+  routes?: number;
+  associations?: number;
+}
+
+export interface AwsLoadBalancer {
+  name?: string;
+  arn?: string;
+  dns_name?: string;
+  type?: string;
+  scheme?: string;
+  state?: string;
+  vpc_id?: string;
+  azs?: string[];
+}
+
+export interface AwsTargetGroup {
+  name?: string;
+  arn?: string;
+  protocol?: string;
+  port?: number;
+  target_type?: string;
+  vpc_id?: string;
+  health_check_path?: string;
+}
+
+export interface AwsTargetHealth {
+  target_group?: string;
+  healthy?: number;
+  unhealthy?: number;
+}
+
+export interface AwsAutoScalingGroup {
+  name?: string;
+  desired?: number;
+  min?: number;
+  max?: number;
+  instances?: number;
+  azs?: string[];
+  created_at?: string | null;
+}
+
+export interface AwsEcsScalingTarget {
+  resource_id?: string;
+  dimension?: string;
+  min?: number;
+  max?: number;
+}
+
+export interface AwsSecret {
+  name?: string;
+  arn?: string;
+  last_changed_at?: string | null;
+  last_accessed_at?: string | null;
+  rotation_enabled?: boolean;
+  deleted_at?: string | null;
+}
+
+export interface AwsIamRole {
+  name?: string;
+  arn?: string;
+  created_at?: string | null;
+  attached_policies?: number;
+  max_session_duration?: number;
+}
+
+export interface AwsMetricPoint {
+  average?: number | null;
+  maximum?: number | null;
+  timestamp?: string | null;
 }
 
 export type CatalogFilter =

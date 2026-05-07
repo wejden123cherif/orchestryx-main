@@ -13,6 +13,7 @@ from apps.api.config import (
     AWS_ECR_WORKER_REPOSITORY,
     AWS_ECS_CLUSTER,
     AWS_REGION,
+    AWS_VPC_ID,
     AWS_WORKER_LOG_GROUP,
     AWS_WORKER_SERVICE,
     DESTROY_QUEUE,
@@ -277,6 +278,242 @@ def _lab_instances() -> list[dict[str, Any]]:
         return [{"status": "ERROR", "error": f"EC2 unavailable: {exc.__class__.__name__}"}]
 
 
+def _network() -> dict[str, Any]:
+    try:
+        ec2 = _client("ec2")
+        vpc_filters = [{"Name": "tag:Project", "Values": ["orchestryx"]}]
+        if AWS_VPC_ID:
+            vpc_filters = [{"Name": "vpc-id", "Values": [AWS_VPC_ID]}]
+        vpcs = ec2.describe_vpcs(Filters=vpc_filters).get("Vpcs", [])
+        if not vpcs and AWS_VPC_ID:
+            vpcs = ec2.describe_vpcs(VpcIds=[AWS_VPC_ID]).get("Vpcs", [])
+        vpc_ids = [vpc["VpcId"] for vpc in vpcs]
+
+        subnets = []
+        security_groups = []
+        route_tables = []
+        if vpc_ids:
+            subnet_resp = ec2.describe_subnets(Filters=[{"Name": "vpc-id", "Values": vpc_ids}])
+            subnets = [
+                {
+                    "id": subnet.get("SubnetId"),
+                    "vpc_id": subnet.get("VpcId"),
+                    "az": subnet.get("AvailabilityZone"),
+                    "cidr": subnet.get("CidrBlock"),
+                    "available_ips": subnet.get("AvailableIpAddressCount"),
+                    "public_ip_on_launch": subnet.get("MapPublicIpOnLaunch"),
+                }
+                for subnet in subnet_resp.get("Subnets", [])
+            ]
+
+            sg_resp = ec2.describe_security_groups(Filters=[{"Name": "vpc-id", "Values": vpc_ids}])
+            security_groups = [
+                {
+                    "id": group.get("GroupId"),
+                    "name": group.get("GroupName"),
+                    "description": group.get("Description"),
+                    "vpc_id": group.get("VpcId"),
+                    "ingress_rules": len(group.get("IpPermissions", [])),
+                    "egress_rules": len(group.get("IpPermissionsEgress", [])),
+                }
+                for group in sg_resp.get("SecurityGroups", [])
+                if "orchestryx" in group.get("GroupName", "").lower()
+                or "orchestryx" in group.get("Description", "").lower()
+            ]
+
+            rt_resp = ec2.describe_route_tables(Filters=[{"Name": "vpc-id", "Values": vpc_ids}])
+            route_tables = [
+                {
+                    "id": table.get("RouteTableId"),
+                    "vpc_id": table.get("VpcId"),
+                    "routes": len(table.get("Routes", [])),
+                    "associations": len(table.get("Associations", [])),
+                }
+                for table in rt_resp.get("RouteTables", [])
+            ]
+
+        return {
+            "vpcs": [
+                {
+                    "id": vpc.get("VpcId"),
+                    "cidr": vpc.get("CidrBlock"),
+                    "state": vpc.get("State"),
+                    "is_default": vpc.get("IsDefault"),
+                }
+                for vpc in vpcs
+            ],
+            "subnets": subnets,
+            "security_groups": security_groups,
+            "route_tables": route_tables,
+        }
+    except (BotoCoreError, ClientError) as exc:
+        return {"vpcs": [], "subnets": [], "security_groups": [], "route_tables": [], **_error("Network unavailable", exc)}
+
+
+def _load_balancing() -> dict[str, Any]:
+    try:
+        elbv2 = _client("elbv2")
+        lbs = [
+            {
+                "name": lb.get("LoadBalancerName"),
+                "arn": lb.get("LoadBalancerArn"),
+                "dns_name": lb.get("DNSName"),
+                "type": lb.get("Type"),
+                "scheme": lb.get("Scheme"),
+                "state": lb.get("State", {}).get("Code"),
+                "vpc_id": lb.get("VpcId"),
+                "azs": [az.get("ZoneName") for az in lb.get("AvailabilityZones", [])],
+            }
+            for lb in elbv2.describe_load_balancers().get("LoadBalancers", [])
+            if "orchestryx" in lb.get("LoadBalancerName", "").lower()
+        ]
+        target_groups = [
+            {
+                "name": tg.get("TargetGroupName"),
+                "arn": tg.get("TargetGroupArn"),
+                "protocol": tg.get("Protocol"),
+                "port": tg.get("Port"),
+                "target_type": tg.get("TargetType"),
+                "vpc_id": tg.get("VpcId"),
+                "health_check_path": tg.get("HealthCheckPath"),
+            }
+            for tg in elbv2.describe_target_groups().get("TargetGroups", [])
+            if "orchestryx" in tg.get("TargetGroupName", "").lower()
+        ]
+        health = []
+        for tg in target_groups[:10]:
+            arn = tg.get("arn")
+            if not arn:
+                continue
+            target_health = elbv2.describe_target_health(TargetGroupArn=arn).get("TargetHealthDescriptions", [])
+            health.append(
+                {
+                    "target_group": tg["name"],
+                    "healthy": sum(1 for item in target_health if item.get("TargetHealth", {}).get("State") == "healthy"),
+                    "unhealthy": sum(1 for item in target_health if item.get("TargetHealth", {}).get("State") != "healthy"),
+                }
+            )
+        return {"load_balancers": lbs, "target_groups": target_groups, "target_health": health}
+    except (BotoCoreError, ClientError) as exc:
+        return {"load_balancers": [], "target_groups": [], "target_health": [], **_error("Load balancing unavailable", exc)}
+
+
+def _autoscaling() -> dict[str, Any]:
+    try:
+        autoscaling = _client("autoscaling")
+        groups = [
+            {
+                "name": group.get("AutoScalingGroupName"),
+                "desired": group.get("DesiredCapacity"),
+                "min": group.get("MinSize"),
+                "max": group.get("MaxSize"),
+                "instances": len(group.get("Instances", [])),
+                "azs": group.get("AvailabilityZones", []),
+                "created_at": _utc(group.get("CreatedTime")),
+            }
+            for group in autoscaling.describe_auto_scaling_groups().get("AutoScalingGroups", [])
+            if "orchestryx" in group.get("AutoScalingGroupName", "").lower()
+        ]
+        appscaling = _client("application-autoscaling")
+        scalable_targets = appscaling.describe_scalable_targets(ServiceNamespace="ecs").get("ScalableTargets", [])
+        ecs_targets = [
+            {
+                "resource_id": target.get("ResourceId"),
+                "dimension": target.get("ScalableDimension"),
+                "min": target.get("MinCapacity"),
+                "max": target.get("MaxCapacity"),
+            }
+            for target in scalable_targets
+            if "orchestryx" in target.get("ResourceId", "").lower()
+        ]
+        return {"groups": groups, "ecs_scaling_targets": ecs_targets}
+    except (BotoCoreError, ClientError) as exc:
+        return {"groups": [], "ecs_scaling_targets": [], **_error("Autoscaling unavailable", exc)}
+
+
+def _secrets() -> dict[str, Any]:
+    try:
+        secrets = _client("secretsmanager")
+        paginator = secrets.get_paginator("list_secrets")
+        items = []
+        for page in paginator.paginate(Filters=[{"Key": "name", "Values": ["orchestryx"]}]):
+            for secret in page.get("SecretList", []):
+                items.append(
+                    {
+                        "name": secret.get("Name"),
+                        "arn": secret.get("ARN"),
+                        "last_changed_at": _utc(secret.get("LastChangedDate")),
+                        "last_accessed_at": _utc(secret.get("LastAccessedDate")),
+                        "rotation_enabled": secret.get("RotationEnabled", False),
+                        "deleted_at": _utc(secret.get("DeletedDate")),
+                    }
+                )
+            if len(items) >= 50:
+                break
+        return {"items": items[:50], "count": len(items)}
+    except (BotoCoreError, ClientError) as exc:
+        return {"items": [], "count": 0, **_error("Secrets unavailable", exc)}
+
+
+def _iam() -> dict[str, Any]:
+    try:
+        iam = boto3.client("iam")
+        paginator = iam.get_paginator("list_roles")
+        roles = []
+        for page in paginator.paginate():
+            for role in page.get("Roles", []):
+                role_name = role.get("RoleName", "")
+                if "orchestryx" not in role_name.lower():
+                    continue
+                attached = iam.list_attached_role_policies(RoleName=role_name).get("AttachedPolicies", [])
+                roles.append(
+                    {
+                        "name": role_name,
+                        "arn": role.get("Arn"),
+                        "created_at": _utc(role.get("CreateDate")),
+                        "attached_policies": len(attached),
+                        "max_session_duration": role.get("MaxSessionDuration"),
+                    }
+                )
+            if len(roles) >= 30:
+                break
+        return {"roles": roles[:30]}
+    except (BotoCoreError, ClientError) as exc:
+        return {"roles": [], **_error("IAM unavailable", exc)}
+
+
+def _ecs_metrics() -> dict[str, Any]:
+    end = datetime.now(timezone.utc)
+    start = end - timedelta(minutes=30)
+    try:
+        cloudwatch = _client("cloudwatch")
+        metrics = {}
+        for service_name, key in [(AWS_API_SERVICE, "api"), (AWS_WORKER_SERVICE, "worker")]:
+            for metric_name in ["CPUUtilization", "MemoryUtilization"]:
+                response = cloudwatch.get_metric_statistics(
+                    Namespace="AWS/ECS",
+                    MetricName=metric_name,
+                    Dimensions=[
+                        {"Name": "ClusterName", "Value": AWS_ECS_CLUSTER},
+                        {"Name": "ServiceName", "Value": service_name},
+                    ],
+                    StartTime=start,
+                    EndTime=end,
+                    Period=300,
+                    Statistics=["Average", "Maximum"],
+                )
+                datapoints = response.get("Datapoints", [])
+                latest = sorted(datapoints, key=lambda item: item.get("Timestamp", datetime.min.replace(tzinfo=timezone.utc)))[-1] if datapoints else {}
+                metrics.setdefault(key, {})[metric_name] = {
+                    "average": round(latest.get("Average", 0), 2) if latest else None,
+                    "maximum": round(latest.get("Maximum", 0), 2) if latest else None,
+                    "timestamp": _utc(latest.get("Timestamp")) if latest else None,
+                }
+        return metrics
+    except (BotoCoreError, ClientError) as exc:
+        return {"status": "ERROR", "error": f"ECS metrics unavailable: {exc.__class__.__name__}"}
+
+
 def _alarms() -> dict[str, Any]:
     try:
         response = _client("cloudwatch").describe_alarms(StateValue="ALARM")
@@ -359,6 +596,12 @@ def get_aws_overview() -> dict[str, Any]:
         },
         "cloudformation": {"lab_stacks": _lab_stacks()},
         "ec2": {"lab_instances": _lab_instances()},
+        "network": _network(),
+        "load_balancing": _load_balancing(),
+        "autoscaling": _autoscaling(),
+        "secrets": _secrets(),
+        "iam": _iam(),
+        "metrics": {"ecs": _ecs_metrics()},
         "alarms": _alarms(),
         "costs": _costs(),
     }

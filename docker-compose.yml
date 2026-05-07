@@ -46,6 +46,7 @@ services:
       AWS_WORKER_LOG_GROUP: ${AWS_WORKER_LOG_GROUP:-/ecs/orchestryx-worker}
       AWS_ECR_API_REPOSITORY: ${AWS_ECR_API_REPOSITORY:-orchestryx-api}
       AWS_ECR_WORKER_REPOSITORY: ${AWS_ECR_WORKER_REPOSITORY:-orchestryx-worker}
+      AWS_VPC_ID: ${AWS_VPC_ID:-}
     volumes:
       - ~/.aws:/root/.aws:ro
 
@@ -82,6 +83,7 @@ services:
       AWS_WORKER_LOG_GROUP: ${AWS_WORKER_LOG_GROUP:-/ecs/orchestryx-worker}
       AWS_ECR_API_REPOSITORY: ${AWS_ECR_API_REPOSITORY:-orchestryx-api}
       AWS_ECR_WORKER_REPOSITORY: ${AWS_ECR_WORKER_REPOSITORY:-orchestryx-worker}
+      AWS_VPC_ID: ${AWS_VPC_ID:-}
     volumes:
       - ~/.aws:/root/.aws:ro
 

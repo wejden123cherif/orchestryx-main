@@ -33,6 +33,8 @@ export const api = axios.create({
   },
 });
 
+const ADMIN_AWS_TIMEOUT_MS = 60000;
+
 // Allows AuthContext to provide the latest token reader to the API layer.
 export const setAccessTokenGetter = (
   getter: (() => string | null) | null
@@ -87,8 +89,15 @@ export const extractApiErrorMessage = (error: unknown): string => {
     return "Access denied for this operation.";
   }
 
-  if (error.code === "ECONNABORTED" || error.code === "ERR_NETWORK") {
-    return "Backend is unreachable. Confirm the API URL is correct.";
+  if (error.code === "ECONNABORTED") {
+    const timeoutSeconds = Math.round(Number(error.config?.timeout ?? api.defaults.timeout ?? 0) / 1000);
+    const path = error.config?.url ?? "request";
+    return `Request timed out after ${timeoutSeconds || 20}s while calling ${path}. The backend may still be healthy; retry or check the service logs.`;
+  }
+
+  if (error.code === "ERR_NETWORK") {
+    const baseUrl = String(error.config?.baseURL ?? api.defaults.baseURL ?? "the configured API URL");
+    return `Browser could not reach the backend at ${baseUrl}. Confirm Docker Compose is running, the frontend was restarted after env changes, and you are opening the app from the same machine or using the host LAN API URL.`;
   }
 
   return "Request failed. Please try again.";
@@ -225,13 +234,16 @@ export async function getAdminCreditTransactions(): Promise<CreditTransaction[]>
 }
 
 export async function getAdminAwsOverview(): Promise<AwsOverview> {
-  const response = await api.get<AwsOverview>("/admin/aws/overview");
+  const response = await api.get<AwsOverview>("/admin/aws/overview", {
+    timeout: ADMIN_AWS_TIMEOUT_MS,
+  });
   return response.data;
 }
 
 export async function getAdminAwsLogs(service: "api" | "worker"): Promise<string> {
   const response = await api.get<string>(`/admin/aws/logs/${service}`, {
     responseType: "text",
+    timeout: ADMIN_AWS_TIMEOUT_MS,
   });
   return response.data;
 }

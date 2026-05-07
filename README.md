@@ -150,6 +150,7 @@ New lab starts move through `QUEUED`, `PROVISIONING`, `STARTING`, and `READY`. T
 - `AWS_ECS_CLUSTER`, `AWS_API_SERVICE`, `AWS_WORKER_SERVICE`
 - `AWS_AURORA_CLUSTER`, `AWS_API_LOG_GROUP`, `AWS_WORKER_LOG_GROUP`
 - `AWS_ECR_API_REPOSITORY`, `AWS_ECR_WORKER_REPOSITORY`
+- `AWS_VPC_ID` when the admin overlay should focus on one known VPC
 
 ## Current State
 
