@@ -17,7 +17,6 @@ def _literal_keyword(node: ast.Call, name: str):
 def _active_lab_templates() -> list[dict]:
     tree = ast.parse(SEEDS_PATH.read_text(encoding="utf-8"))
     templates: list[dict] = []
-
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue

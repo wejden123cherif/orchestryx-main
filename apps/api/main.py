@@ -12,14 +12,14 @@ from sqlalchemy import select, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from apps.api.api import auth, catalog, labs
+from apps.api.api import admin, auth, catalog, labs
 from apps.api.config import CORS_ALLOWED_ORIGINS
 from apps.api.database import engine, Base, get_db
 from apps.api.middleware.auth import get_current_user
 # Import ALL models so Base.metadata.create_all() sees every table.
 # CreditTransaction = append-only credit ledger
 # LabFlag = SHA-256 hashed flags per template
-from apps.api.models import LabInstance, LabTemplate, User, CreditTransaction, LabFlag
+from apps.api.models import CreditTransaction, LabEvent, LabFlag, LabInstance, LabTemplate, User
 
 # Import seed data: templates (lab definitions) + flags (correct answers)
 from apps.api.seeds import LAB_TEMPLATES, LAB_FLAGS
@@ -34,6 +34,13 @@ def _copy_seed_columns(target, seed, columns: list[str]) -> None:
     """Copy catalog seed values onto an existing DB row by column name."""
     for column in columns:
         setattr(target, column, getattr(seed, column))
+
+
+async def _ensure_column(conn, table: str, definition: str) -> None:
+    try:
+        await conn.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {definition};"))
+    except Exception as exc:
+        logger.debug("Column migration skipped for %s.%s: %s", table, definition, exc)
 
 # Allow frontend to talk to backend
 app.add_middleware(
@@ -91,6 +98,17 @@ async def startup():
                 logger.info("Ensured challenge_path column exists in lab_templates")
             except Exception as e:
                 logger.debug(f"Challenge path migration info: {e}")
+
+            await _ensure_column(conn, "users", "role VARCHAR NOT NULL DEFAULT 'user'")
+            await _ensure_column(conn, "users", "is_disabled BOOLEAN NOT NULL DEFAULT FALSE")
+            await _ensure_column(conn, "users", "max_active_labs INTEGER")
+            await _ensure_column(conn, "lab_instances", "progress INTEGER NOT NULL DEFAULT 0")
+            await _ensure_column(conn, "lab_instances", "status_message VARCHAR NOT NULL DEFAULT 'Queued for provisioning.'")
+            await _ensure_column(conn, "lab_instances", "failure_reason TEXT")
+            await _ensure_column(conn, "lab_instances", "retry_count INTEGER NOT NULL DEFAULT 0")
+            await _ensure_column(conn, "lab_instances", "provisioning_started_at TIMESTAMP WITH TIME ZONE")
+            await _ensure_column(conn, "lab_instances", "ready_at TIMESTAMP WITH TIME ZONE")
+            await _ensure_column(conn, "lab_instances", "last_status_at TIMESTAMP WITH TIME ZONE")
             
             # Commit the schema changes to the database
             await conn.commit()
@@ -176,6 +194,7 @@ async def startup():
 app.include_router(auth.router)
 app.include_router(catalog.router)
 app.include_router(labs.router)
+app.include_router(admin.router)
 
 @app.get("/health")
 async def health():
@@ -205,5 +224,8 @@ async def me(user=Depends(get_current_user), db: AsyncSession = Depends(get_db))
         "email": db_user.email,
         "credits_balance": db_user.credits_balance,
         "subscription_tier": db_user.subscription_tier,
+        "role": db_user.role,
+        "is_disabled": db_user.is_disabled,
+        "max_active_labs": db_user.max_active_labs,
         "created_at": db_user.created_at
     }

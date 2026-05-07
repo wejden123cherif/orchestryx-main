@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Float, DateTime
+from sqlalchemy import Boolean, Column, String, Float, Integer, DateTime
 from sqlalchemy.sql import func
 from apps.api.database import Base
 import uuid
@@ -40,6 +40,17 @@ class User(Base):
     # The user's plan: "free", "pro", etc.
     # Controls how many labs they can run simultaneously
     subscription_tier = Column(String, default="free")
+
+    # Platform role. Admin endpoints also accept Cognito group claims, but this
+    # database field lets operators grant access without changing Cognito setup.
+    role = Column(String, nullable=False, default="user")
+
+    # Disabled accounts keep their historical usage and credit ledger but cannot
+    # start new labs.
+    is_disabled = Column(Boolean, nullable=False, default=False)
+
+    # Optional per-user override. Null means use the configured/tier default.
+    max_active_labs = Column(Integer, nullable=True)
 
     # Timestamp of when the account was created
     # server_default=func.now() means Postgres sets this automatically

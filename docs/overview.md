@@ -18,7 +18,7 @@ The long-term product is a self-service lab range where users can:
 
 The MVP is focused on pre-built templates. The current seed catalog includes a Juice Shop SQL injection lab template. The API supports authentication, catalog reads, lab start, active lab listing, status polling, WireGuard config download, and teardown.
 
-Provisioning is asynchronous. The API writes the lab record and pushes work to SQS/Celery; workers deploy AWS infrastructure through CDK/CloudFormation and update the database when the lab is ready.
+Provisioning is asynchronous. The API writes the lab record, records the credit debit, and pushes work to SQS/Celery. Workers deploy AWS infrastructure through CDK/CloudFormation, update progress through `QUEUED`, `PROVISIONING`, `STARTING`, and `READY`, store VPN access material, and clean up expired or failed labs.
 
 ## Current Deployment Direction
 

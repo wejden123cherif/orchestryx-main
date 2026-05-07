@@ -1,9 +1,14 @@
 import axios, { type InternalAxiosRequestConfig } from "axios";
 import type {
   ActiveLab,
+  AdminLab,
+  AdminOverview,
+  AdminUser,
   AuthTokens,
   ConfirmPayload,
+  CreditTransaction,
   EmailPasswordPayload,
+  LabEvent,
   LabStatusResponse,
   LabTemplate,
   CustomLabTopology,
@@ -147,6 +152,11 @@ export async function getLabStatus(instanceId: string): Promise<LabStatusRespons
   return response.data;
 }
 
+export async function getLabEvents(instanceId: string): Promise<LabEvent[]> {
+  const response = await api.get<LabEvent[]>(`/labs/${instanceId}/events`);
+  return response.data;
+}
+
 export async function stopLab(instanceId: string): Promise<StopLabResponse> {
   const response = await api.delete<StopLabResponse>(`/labs/${instanceId}`);
   return response.data;
@@ -168,5 +178,47 @@ export async function submitLabFlag(
   const response = await api.post<SubmitFlagResponse>(`/labs/${instanceId}/flag`, {
     flag,
   });
+  return response.data;
+}
+
+export async function getAdminOverview(): Promise<AdminOverview> {
+  const response = await api.get<AdminOverview>("/admin/overview");
+  return response.data;
+}
+
+export async function getAdminUsers(): Promise<AdminUser[]> {
+  const response = await api.get<AdminUser[]>("/admin/users");
+  return response.data;
+}
+
+export async function adjustAdminUserCredits(
+  userId: string,
+  delta: number,
+  reason: string
+): Promise<{ user_id: string; credits_balance: number }> {
+  const response = await api.post<{ user_id: string; credits_balance: number }>(
+    `/admin/users/${userId}/credits`,
+    { delta, reason }
+  );
+  return response.data;
+}
+
+export async function getAdminLabs(): Promise<AdminLab[]> {
+  const response = await api.get<AdminLab[]>("/admin/labs");
+  return response.data;
+}
+
+export async function adminStopLab(instanceId: string): Promise<StopLabResponse> {
+  const response = await api.post<StopLabResponse>(`/admin/labs/${instanceId}/stop`);
+  return response.data;
+}
+
+export async function getAdminEvents(): Promise<LabEvent[]> {
+  const response = await api.get<LabEvent[]>("/admin/events");
+  return response.data;
+}
+
+export async function getAdminCreditTransactions(): Promise<CreditTransaction[]> {
+  const response = await api.get<CreditTransaction[]>("/admin/credits");
   return response.data;
 }

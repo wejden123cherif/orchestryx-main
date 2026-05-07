@@ -9,27 +9,35 @@ from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import APIRouter, Depends, HTTPException, Path
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, StringConstraints
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from apps.api.config import AWS_REGION
+from apps.api.config import AWS_REGION, LAB_MAX_ACTIVE_PER_USER
 from apps.api.database import get_db
 from apps.api.middleware.auth import get_current_user
+from apps.api.models.credit_transaction import CreditTransaction
+from apps.api.models.lab_event import LabEvent
 from apps.api.models.lab_flag import LabFlag
 from apps.api.models.lab_instance import LabInstance
 from apps.api.models.lab_template import LabTemplate
 from apps.api.models.user import User
+from apps.api.services.lab_lifecycle import (
+    ACTIVE_LAB_STATUSES,
+    LAB_STATUS_DESTROYING,
+    LAB_STATUS_FAILED,
+    LAB_STATUS_QUEUED,
+    LAB_STATUS_READY,
+    LAB_STATUS_STOPPED,
+    STOPPABLE_LAB_STATUSES,
+    normalize_lab_status,
+)
 
 router = APIRouter(prefix="/labs", tags=["labs"])
 logger = logging.getLogger(__name__)
 
-LAB_STATUS_PROVISIONING = "PROVISIONING"
-LAB_STATUS_RUNNING = "RUNNING"
-LAB_STATUS_DESTROYING = "DESTROYING"
-LAB_STATUS_FAILED = "FAILED"
-
-ACTIVE_LAB_STATUSES = [LAB_STATUS_PROVISIONING, LAB_STATUS_RUNNING]
+LEGACY_ACTIVE_LAB_STATUSES = [*ACTIVE_LAB_STATUSES, "RUNNING", "DESTROYING"]
+USER_VISIBLE_LAB_STATUSES = [*LEGACY_ACTIVE_LAB_STATUSES, LAB_STATUS_FAILED, "EXPIRED"]
 
 
 def _normalize_challenge_path(path: str | None) -> str:
@@ -45,7 +53,7 @@ def _normalize_challenge_path(path: str | None) -> str:
 
 
 def _build_challenge_url(instance: LabInstance, template: LabTemplate | None) -> str | None:
-    if instance.status != LAB_STATUS_RUNNING or template is None:
+    if normalize_lab_status(instance.status) != LAB_STATUS_READY or template is None:
         return None
 
     return (
@@ -79,7 +87,6 @@ def _is_correct_flag(
     return hmac.compare_digest(submitted_hash, dynamic_flag_hash)
 
 
-STOPPABLE_LAB_STATUSES = [LAB_STATUS_PROVISIONING, LAB_STATUS_RUNNING]
 TEMPLATE_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_-]*$"
 INSTANCE_ID_PATTERN = (
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-"
@@ -127,6 +134,36 @@ async def _get_current_db_user(db: AsyncSession, cognito_sub: str) -> User:
         raise HTTPException(status_code=404, detail="User not found")
 
     return db_user
+
+
+def _active_limit_for_user(db_user: User) -> int:
+    if db_user.max_active_labs is not None:
+        return db_user.max_active_labs
+    if db_user.subscription_tier == "pro":
+        return max(4, LAB_MAX_ACTIVE_PER_USER)
+    return LAB_MAX_ACTIVE_PER_USER
+
+
+def _serialize_instance(
+    instance: LabInstance,
+    template: LabTemplate | None,
+) -> dict:
+    status = normalize_lab_status(instance.status)
+    return {
+        "instance_id": instance.id,
+        "template_id": instance.template_id,
+        "status": status,
+        "progress": instance.progress,
+        "status_message": instance.status_message,
+        "failure_reason": instance.failure_reason,
+        "ec2_public_ip": instance.ec2_public_ip,
+        "challenge_url": _build_challenge_url(instance, template),
+        "expires_at": instance.expires_at,
+        "started_at": instance.started_at,
+        "ready_at": instance.ready_at,
+        "last_status_at": instance.last_status_at,
+        "flag_submitted": instance.flag_submitted,
+    }
 
 
 async def _get_active_template(db: AsyncSession, template_id: str) -> LabTemplate:
@@ -178,41 +215,86 @@ async def start_lab(
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Start a lab session.
-    1. Find the user in DB
-    2. Find the lab template
-    3. Check user has enough credits
-    4. Deduct credits
-    5. Create LabInstance with status PROVISIONING
-    6. Return instance ID immediately (provisioning happens async later)
+    Start a lab session and return immediately after the provisioning task is queued.
     """
 
-    db_user = await _get_current_db_user(db, _claims_sub(user))
+    cognito_sub = _claims_sub(user)
+    try:
+        user_result = await db.execute(
+            select(User)
+            .where(User.cognito_sub == cognito_sub)
+            .with_for_update()
+        )
+        db_user = user_result.scalar_one_or_none()
+    except SQLAlchemyError:
+        logger.exception("Database query failed while locking current user")
+        raise HTTPException(status_code=500, detail="Database query failed")
+
+    if db_user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    if db_user.is_disabled:
+        raise HTTPException(status_code=403, detail="This account is disabled.")
+
     template = await _get_active_template(db, body.template_id)
 
-    # Check credits
+    try:
+        active_count_result = await db.execute(
+            select(func.count()).select_from(LabInstance).where(
+                LabInstance.user_id == db_user.id,
+                LabInstance.status.in_(LEGACY_ACTIVE_LAB_STATUSES),
+            )
+        )
+        active_count = int(active_count_result.scalar_one())
+    except SQLAlchemyError:
+        logger.exception("Database query failed while counting active labs")
+        raise HTTPException(status_code=500, detail="Database query failed")
+
+    active_limit = _active_limit_for_user(db_user)
+    if active_count >= active_limit:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Active lab limit reached ({active_limit}). Stop a lab before starting another.",
+        )
+
     if db_user.credits_balance < template.credits_cost:
         raise HTTPException(
             status_code=402,
             detail=f"Insufficient credits. You have {db_user.credits_balance}, this lab costs {template.credits_cost}.",
         )
 
-    # Deduct credits
     db_user.credits_balance -= template.credits_cost
 
-    # Calculate expiry time
     expires_at = datetime.now(timezone.utc) + timedelta(hours=template.ttl_hours)
 
-    # Create lab instance
     instance = LabInstance(
         user_id=db_user.id,
         template_id=template.id,
-        status=LAB_STATUS_PROVISIONING,
-        cfn_stack_name=None,  # set by Celery worker after CDK deploy
+        status=LAB_STATUS_QUEUED,
+        progress=5,
+        status_message="Queued for provisioning.",
+        cfn_stack_name=None,
         expires_at=expires_at,
+        last_status_at=datetime.now(timezone.utc),
     )
     try:
         db.add(instance)
+        await db.flush()
+        db.add(
+            CreditTransaction(
+                user_id=db_user.id,
+                delta=-float(template.credits_cost),
+                reason=f"Lab start: {template.id} ({instance.id})",
+            )
+        )
+        db.add(
+            LabEvent(
+                instance_id=instance.id,
+                level="info",
+                phase="queued",
+                message="Lab launch accepted and queued.",
+                progress=5,
+            )
+        )
         await db.commit()
         await db.refresh(instance)
     except SQLAlchemyError:
@@ -236,6 +318,23 @@ async def start_lab(
         try:
             db_user.credits_balance += template.credits_cost
             instance.status = LAB_STATUS_FAILED
+            instance.failure_reason = "Could not queue provisioning task."
+            db.add(
+                CreditTransaction(
+                    user_id=db_user.id,
+                    delta=float(template.credits_cost),
+                    reason=f"Refund: provisioning queue failure for {instance.id}",
+                )
+            )
+            db.add(
+                LabEvent(
+                    instance_id=instance.id,
+                    level="error",
+                    phase="queued",
+                    message="Failed to queue provisioning task; credits refunded.",
+                    progress=0,
+                )
+            )
             await db.commit()
         except SQLAlchemyError:
             await db.rollback()
@@ -244,7 +343,9 @@ async def start_lab(
 
     return {
         "instance_id": instance.id,
-        "status": instance.status,
+        "status": normalize_lab_status(instance.status),
+        "progress": instance.progress,
+        "status_message": instance.status_message,
         "template": template.title,
         "expires_at": instance.expires_at,
         "message": "Lab is provisioning. Poll /labs/{id}/status for updates.",
@@ -258,7 +359,7 @@ async def get_active_labs(
 ):
     """
     Returns all active labs for the current user.
-    Active = PROVISIONING or RUNNING.
+    Active = queued, provisioning, starting, ready, or legacy running.
     """
     db_user = await _get_current_db_user(db, _claims_sub(user))
 
@@ -266,7 +367,7 @@ async def get_active_labs(
         result = await db.execute(
             select(LabInstance).where(
                 LabInstance.user_id == db_user.id,
-                LabInstance.status.in_(ACTIVE_LAB_STATUSES),
+                LabInstance.status.in_(USER_VISIBLE_LAB_STATUSES),
             )
         )
         instances = result.scalars().all()
@@ -289,18 +390,7 @@ async def get_active_labs(
             logger.exception("Database query failed while loading active lab templates")
             raise HTTPException(status_code=500, detail="Database query failed")
 
-    return [
-        {
-            "instance_id": i.id,
-            "template_id": i.template_id,
-            "status": i.status,
-            "ec2_public_ip": i.ec2_public_ip,
-            "challenge_url": _build_challenge_url(i, template_by_id.get(i.template_id)),
-            "expires_at": i.expires_at,
-            "started_at": i.started_at,
-        }
-        for i in instances
-    ]
+    return [_serialize_instance(i, template_by_id.get(i.template_id)) for i in instances]
 
 
 @router.get("/{instance_id}/status")
@@ -325,16 +415,41 @@ async def get_lab_status(
         logger.exception("Database query failed while loading lab template for status")
         template = None
 
-    return {
-        "instance_id": instance.id,
-        "status": instance.status,
-        "template_id": instance.template_id,
-        "ec2_public_ip": instance.ec2_public_ip,
-        "challenge_url": _build_challenge_url(instance, template),
-        "expires_at": instance.expires_at,
-        "started_at": instance.started_at,
-        "flag_submitted": instance.flag_submitted,
-    }
+    return _serialize_instance(instance, template)
+
+
+@router.get("/{instance_id}/events")
+async def get_lab_events(
+    instance_id: str = Path(..., pattern=INSTANCE_ID_PATTERN),
+    user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    db_user = await _get_current_db_user(db, _claims_sub(user))
+    await _get_owned_instance(db, instance_id, db_user.id)
+
+    try:
+        result = await db.execute(
+            select(LabEvent)
+            .where(LabEvent.instance_id == instance_id)
+            .order_by(LabEvent.created_at.desc())
+            .limit(50)
+        )
+        events = list(reversed(result.scalars().all()))
+    except SQLAlchemyError:
+        logger.exception("Database query failed while loading lab events")
+        raise HTTPException(status_code=500, detail="Database query failed")
+
+    return [
+        {
+            "id": event.id,
+            "level": event.level,
+            "phase": event.phase,
+            "message": event.message,
+            "progress": event.progress,
+            "created_at": event.created_at,
+        }
+        for event in events
+    ]
 
 
 @router.delete("/{instance_id}")
@@ -351,14 +466,54 @@ async def stop_lab(
     db_user = await _get_current_db_user(db, _claims_sub(user))
     instance = await _get_owned_instance(db, instance_id, db_user.id)
 
-    if instance.status not in STOPPABLE_LAB_STATUSES:
+    current_status = normalize_lab_status(instance.status)
+    if current_status not in STOPPABLE_LAB_STATUSES:
         raise HTTPException(
             status_code=400,
             detail=f"Cannot stop a lab with status {instance.status}",
         )
 
     previous_status = instance.status
+    if current_status == LAB_STATUS_QUEUED and not instance.cfn_stack_name and not instance.secrets_key:
+        instance.status = LAB_STATUS_STOPPED
+        instance.progress = 100
+        instance.status_message = "Stopped before provisioning began."
+        instance.destroyed_at = datetime.now(timezone.utc)
+        instance.last_status_at = datetime.now(timezone.utc)
+        db.add(
+            LabEvent(
+                instance_id=instance.id,
+                level="info",
+                phase="stopped",
+                message="Lab stopped before provisioning began.",
+                progress=100,
+            )
+        )
+        try:
+            await db.commit()
+        except SQLAlchemyError:
+            await db.rollback()
+            logger.exception("Database write failed while stopping queued lab")
+            raise HTTPException(status_code=500, detail="Database write failed")
+
+        return {
+            "instance_id": instance.id,
+            "status": LAB_STATUS_STOPPED,
+            "message": "Lab stopped before provisioning began.",
+        }
+
     instance.status = LAB_STATUS_DESTROYING
+    instance.status_message = "Stop requested; teardown is queued."
+    instance.last_status_at = datetime.now(timezone.utc)
+    db.add(
+        LabEvent(
+            instance_id=instance.id,
+            level="info",
+            phase="destroying",
+            message="User requested lab teardown.",
+            progress=instance.progress,
+        )
+    )
     try:
         await db.commit()
     except SQLAlchemyError:
@@ -406,7 +561,7 @@ async def get_lab_config(
     db_user = await _get_current_db_user(db, _claims_sub(user))
     instance = await _get_owned_instance(db, instance_id, db_user.id)
 
-    if instance.status != LAB_STATUS_RUNNING:
+    if normalize_lab_status(instance.status) != LAB_STATUS_READY:
         raise HTTPException(
             status_code=400,
             detail=f"Cannot download config for a lab with status {instance.status}",
@@ -461,7 +616,7 @@ async def submit_flag(
 
     # Only running labs can be completed. This prevents users from submitting
     # flags against failed, destroyed, or still-provisioning sessions.
-    if instance.status != LAB_STATUS_RUNNING:
+    if normalize_lab_status(instance.status) != LAB_STATUS_READY:
         raise HTTPException(
             status_code=400,
             detail=f"Cannot submit a flag for a lab with status {instance.status}",
@@ -495,7 +650,7 @@ async def submit_flag(
         }
 
     # Persist the completion marker on the lab instance. The status remains
-    # RUNNING so the student can keep using the environment until TTL/Stop Lab.
+    # READY so the student can keep using the environment until TTL/Stop Lab.
     instance.flag_submitted = True
     try:
         await db.commit()

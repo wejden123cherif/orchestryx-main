@@ -3,6 +3,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.api.models.user import User
+from apps.api.models.credit_transaction import CreditTransaction
 
 
 async def get_or_create_user(db: AsyncSession, cognito_sub: str, email: str) -> User:
@@ -23,6 +24,14 @@ async def get_or_create_user(db: AsyncSession, cognito_sub: str, email: str) -> 
                 email=email,
             )
             db.add(user)
+            await db.flush()
+            db.add(
+                CreditTransaction(
+                    user_id=user.id,
+                    delta=float(user.credits_balance or 0),
+                    reason="Signup bonus",
+                )
+            )
             await db.commit()
             await db.refresh(user)
     except SQLAlchemyError:

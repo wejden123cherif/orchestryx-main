@@ -45,14 +45,32 @@ export function normalizeLabStatus(status: string): NormalizedLabStatus {
   const normalized = status.toUpperCase();
 
   if (
+    normalized === "QUEUED" ||
     normalized === "PROVISIONING" ||
-    normalized === "RUNNING" ||
+    normalized === "STARTING" ||
+    normalized === "READY" ||
     normalized === "DESTROYING" ||
-    normalized === "DESTROYED" ||
+    normalized === "STOPPED" ||
+    normalized === "EXPIRED" ||
     normalized === "FAILED"
   ) {
     return normalized;
   }
 
+  if (normalized === "RUNNING") return "READY";
+  if (normalized === "DESTROYED") return "STOPPED";
+
   return "FAILED";
+}
+
+export function getProvisioningStage(status: string, progress: number): string {
+  const normalized = normalizeLabStatus(status);
+  if (normalized === "QUEUED") return "Queued";
+  if (normalized === "PROVISIONING") return progress >= 35 ? "Creating AWS resources" : "Preparing worker";
+  if (normalized === "STARTING") return "Starting services";
+  if (normalized === "READY") return "Ready";
+  if (normalized === "DESTROYING") return "Stopping";
+  if (normalized === "STOPPED") return "Stopped";
+  if (normalized === "EXPIRED") return "Expired";
+  return "Failed";
 }

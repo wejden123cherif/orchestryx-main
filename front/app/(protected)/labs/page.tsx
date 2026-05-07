@@ -17,7 +17,13 @@ import {
 } from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
 import type { ActiveLab } from "@/lib/types";
-import { cn, formatDateTime, getTimeRemaining } from "@/lib/utils";
+import {
+  cn,
+  formatDateTime,
+  getProvisioningStage,
+  getTimeRemaining,
+  normalizeLabStatus,
+} from "@/lib/utils";
 
 function LabsSkeleton() {
   return (
@@ -150,7 +156,14 @@ export default function LabsPage() {
                 </p>
               </Link>
               <StatusBadge status={lab.status} />
-              <span className="text-sm text-muted-foreground">{getTimeRemaining(lab.expires_at)}</span>
+              <div>
+                <span className="text-sm text-muted-foreground">{getTimeRemaining(lab.expires_at)}</span>
+                {normalizeLabStatus(lab.status) !== "READY" ? (
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {getProvisioningStage(lab.status, lab.progress)} - {lab.progress}%
+                  </p>
+                ) : null}
+              </div>
               <span className="text-sm text-muted-foreground">{formatDateTime(lab.started_at)}</span>
               <div className="flex flex-wrap gap-2 lg:justify-end">
                 {lab.challenge_url ? (
@@ -171,7 +184,7 @@ export default function LabsPage() {
                   type="button"
                   size="sm"
                   variant="secondary"
-                  disabled={actionId === lab.instance_id}
+                  disabled={actionId === lab.instance_id || normalizeLabStatus(lab.status) !== "READY"}
                   onClick={() => downloadConfig(lab.instance_id)}
                 >
                   <Download className="h-3.5 w-3.5" />
@@ -181,7 +194,10 @@ export default function LabsPage() {
                   type="button"
                   size="sm"
                   variant="danger"
-                  disabled={actionId === lab.instance_id}
+                  disabled={
+                    actionId === lab.instance_id ||
+                    ["FAILED", "EXPIRED", "STOPPED"].includes(normalizeLabStatus(lab.status))
+                  }
                   onClick={() => stop(lab.instance_id)}
                 >
                   <Square className="h-3.5 w-3.5" />

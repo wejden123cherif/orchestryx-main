@@ -2,10 +2,13 @@ import type { NormalizedLabStatus } from "@/lib/types";
 import { cn, normalizeLabStatus } from "@/lib/utils";
 
 const statusStyles: Record<NormalizedLabStatus, string> = {
+  QUEUED: "text-sky-300",
   PROVISIONING: "text-indigo-200",
-  RUNNING: "text-green-300",
+  STARTING: "text-cyan-300",
+  READY: "text-green-300",
   DESTROYING: "text-amber-300",
-  DESTROYED: "text-muted-foreground",
+  STOPPED: "text-muted-foreground",
+  EXPIRED: "text-orange-300",
   FAILED: "text-red-300",
 };
 

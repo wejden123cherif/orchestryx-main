@@ -57,10 +57,16 @@ Implemented against the existing FastAPI contracts:
 - `POST /labs/start`
 - `GET /labs/active`
 - `GET /labs/{instance_id}/status`
+- `GET /labs/{instance_id}/events`
 - `GET /labs/{instance_id}/config`
 - `DELETE /labs/{instance_id}`
+- `GET /admin/overview`
+- `GET /admin/users`
+- `GET /admin/labs`
+- `GET /admin/events`
+- `GET /admin/credits`
 
-No placeholder API calls are used. Areas without a backend contract, such as full historical billing, show graceful explanatory empty states.
+No placeholder API calls are used. Areas without a backend contract, such as payment-backed credit purchase, use an explicit request-credits path instead of pretending to charge cards.
 
 ## UI Flows
 
@@ -69,5 +75,6 @@ No placeholder API calls are used. Areas without a backend contract, such as ful
 - Dashboard: credits chip, stats, active labs table, VPN config and stop actions.
 - Catalog: search, category filters, lab cards, and start actions.
 - Catalog detail: lab overview, practice summary, sticky launch panel, insufficient credits state.
-- Lab detail: provisioning progress, running VPN instructions, destroyed/failed recovery state.
-- Account: profile, credit balance, and usage table based on available lab data.
+- Lab detail: queued/provisioning/starting progress, recent provisioning events, ready-state VPN instructions, stopped/expired/failed recovery state.
+- Account: profile, credit balance, credit policy note, request-credit path, and usage table based on available lab data.
+- Admin: overview metrics, users, credit adjustments, lab controls, provisioning events, and credit ledger.

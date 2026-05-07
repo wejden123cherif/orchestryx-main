@@ -116,6 +116,10 @@ Key docs:
 
 - [Overview](docs/overview.md)
 - [Architecture](docs/architecture.md)
+- [Web lab provisioning](docs/provisioning.md)
+- [Admin console](docs/admin.md)
+- [Cost optimization](docs/cost-optimization.md)
+- [Provisioning troubleshooting](docs/troubleshooting-provisioning.md)
 - [Roadmap](docs/roadmap.md)
 - [AWS setup reference](docs/aws-setup.md)
 
@@ -124,6 +128,25 @@ Key docs:
 - Public: `POST /auth/register`, `POST /auth/login`, `POST /auth/confirm`, `POST /auth/refresh`, `GET /health`
 - Authenticated: `GET /me`, `GET /catalog`, `GET /catalog/{template_id}`
 - Authenticated labs: `POST /labs/start`, `GET /labs/active`, `GET /labs/{instance_id}/status`, `GET /labs/{instance_id}/config`, `DELETE /labs/{instance_id}`
+- Admin: `GET /admin/overview`, `GET /admin/users`, `POST /admin/users/{user_id}/credits`, `GET /admin/labs`, `POST /admin/labs/{instance_id}/stop`, `GET /admin/events`, `GET /admin/credits`
+
+## Lab Lifecycle
+
+New lab starts move through `QUEUED`, `PROVISIONING`, `STARTING`, and `READY`. Teardown uses `DESTROYING` and then `STOPPED`; TTL expiry records `EXPIRED`; unrecoverable startup failures become `FAILED` and refund credits. Legacy `RUNNING` and `DESTROYED` rows are normalized by the API for compatibility.
+
+## Important Environment Variables
+
+- `DATABASE_URL`, `DB_SSL_MODE`, `SQL_ECHO`
+- `AWS_REGION`, `AWS_ACCOUNT_ID`
+- `COGNITO_USER_POOL_ID`, `COGNITO_APP_CLIENT_ID`
+- `SQS_PROVISION_URL`, `SQS_DESTROY_URL`, `PROVISION_QUEUE`, `DESTROY_QUEUE`
+- `CORS_ALLOWED_ORIGINS`
+- `CDK_INFRA_PATH`, `WG_DNS`
+- `LAB_MAX_ACTIVE_PER_USER`
+- `LAB_PROVISION_TIMEOUT_SECONDS`
+- `LAB_CLEANUP_STUCK_AFTER_SECONDS`
+- `LAB_STARTUP_RETRY_SECONDS`
+- `LAB_RETENTION_DAYS`
 
 ## Current State
 

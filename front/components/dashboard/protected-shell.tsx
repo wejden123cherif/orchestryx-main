@@ -14,6 +14,7 @@ import {
   LayoutDashboard,
   LogOut,
   Menu,
+  Shield,
   Server,
   UserRound,
 } from "lucide-react";
@@ -40,16 +41,21 @@ const navItems: NavItem[] = [
   { label: "Account", href: "/account", icon: UserRound },
 ];
 
+const adminNavItem: NavItem = { label: "Admin", href: "/admin" as Route, icon: Shield };
+
 function SidebarNav({
   pathname,
+  isAdmin,
   onNavigate,
 }: {
   pathname: string;
+  isAdmin?: boolean;
   onNavigate?: () => void;
 }) {
+  const items = isAdmin ? [...navItems, adminNavItem] : navItems;
   return (
     <nav className="flex-1 space-y-1 p-3" aria-label="Primary navigation">
-      {navItems.map((item) => {
+      {items.map((item) => {
         const Icon = item.icon;
         const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
 
@@ -95,7 +101,7 @@ export function ProtectedShell({ children }: { children: ReactNode }) {
           <span className="text-sm font-medium">Orchestryx</span>
         </div>
 
-        <SidebarNav pathname={pathname} />
+        <SidebarNav pathname={pathname} isAdmin={user?.role === "admin"} />
 
         <div className="border-t border-border p-3">
           <div className="rounded-xl border border-border bg-card p-3">
@@ -141,7 +147,11 @@ export function ProtectedShell({ children }: { children: ReactNode }) {
                 Orchestryx
               </DialogTitle>
             </DialogHeader>
-            <SidebarNav pathname={pathname} onNavigate={() => setMobileOpen(false)} />
+            <SidebarNav
+              pathname={pathname}
+              isAdmin={user?.role === "admin"}
+              onNavigate={() => setMobileOpen(false)}
+            />
             <div className="border-t border-border p-3">
               <p className="truncate text-sm text-foreground">{user?.email ?? "Signed in"}</p>
               <button

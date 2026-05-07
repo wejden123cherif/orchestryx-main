@@ -29,6 +29,9 @@ export interface UserProfile {
   email: string;
   credits_balance: number;
   subscription_tier: string;
+  role: "user" | "admin";
+  is_disabled: boolean;
+  max_active_labs: number | null;
   created_at: string;
 }
 
@@ -46,44 +49,71 @@ export interface LabTemplate {
 }
 
 export type LabStatus =
+  | "QUEUED"
   | "PROVISIONING"
-  | "RUNNING"
+  | "STARTING"
+  | "READY"
   | "DESTROYING"
-  | "DESTROYED"
+  | "STOPPED"
+  | "EXPIRED"
   | "FAILED"
+  | "RUNNING"
+  | "DESTROYED"
+  | "queued"
   | "provisioning"
-  | "running"
+  | "starting"
+  | "ready"
   | "destroying"
-  | "destroyed"
+  | "stopped"
+  | "expired"
   | "failed";
 
 export type NormalizedLabStatus =
+  | "QUEUED"
   | "PROVISIONING"
-  | "RUNNING"
+  | "STARTING"
+  | "READY"
   | "DESTROYING"
-  | "DESTROYED"
+  | "STOPPED"
+  | "EXPIRED"
   | "FAILED";
 
 export interface ActiveLab {
   instance_id: string;
   template_id: string;
   status: LabStatus;
+  progress: number;
+  status_message: string;
+  failure_reason: string | null;
   ec2_public_ip: string | null;
   challenge_url: string | null;
   expires_at: string;
   started_at: string;
+  ready_at: string | null;
+  last_status_at: string | null;
+  flag_submitted: boolean;
 }
 
 export interface StartLabResponse {
   instance_id: string;
   status: LabStatus;
+  progress: number;
+  status_message: string;
   template: string;
   expires_at: string;
   message: string;
 }
 
-export interface LabStatusResponse extends ActiveLab {
-  flag_submitted: boolean;
+export type LabStatusResponse = ActiveLab;
+
+export interface LabEvent {
+  id: string;
+  instance_id?: string;
+  level: "info" | "warning" | "error" | string;
+  phase: string;
+  message: string;
+  progress: number | null;
+  created_at: string;
 }
 
 export interface StopLabResponse {
@@ -98,6 +128,59 @@ export interface SubmitFlagResponse {
   correct: boolean;
   flag_submitted: boolean;
   message: string;
+}
+
+export interface AdminOverview {
+  labs: {
+    active: number;
+    queued: number;
+    provisioning: number;
+    starting: number;
+    ready: number;
+    failed: number;
+    oldest_queue_age_seconds: number | null;
+    all_statuses: Record<string, number>;
+  };
+  users: { total: number };
+  credits: { outstanding_balance: number };
+  system: { database: string; stale_queue_warning: boolean };
+}
+
+export interface AdminUser {
+  id: string;
+  email: string;
+  role: "user" | "admin";
+  is_disabled: boolean;
+  credits_balance: number;
+  subscription_tier: string;
+  max_active_labs: number | null;
+  created_at: string;
+}
+
+export interface AdminLab {
+  instance_id: string;
+  template_id: string;
+  template_title: string;
+  owner_email: string;
+  owner_id: string;
+  status: LabStatus;
+  progress: number;
+  status_message: string;
+  failure_reason: string | null;
+  cfn_stack_name: string | null;
+  ec2_public_ip: string | null;
+  expires_at: string | null;
+  started_at: string;
+  ready_at: string | null;
+  destroyed_at: string | null;
+}
+
+export interface CreditTransaction {
+  id: string;
+  user_id: string;
+  delta: number;
+  reason: string;
+  created_at: string;
 }
 
 export type CatalogFilter =

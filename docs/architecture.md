@@ -51,12 +51,15 @@ CloudFormation + Secrets Manager
 POST /labs/start
   -> validate Cognito JWT
   -> load user and template
-  -> check and deduct credits
-  -> create lab_instances row with PROVISIONING
+  -> check active-lab limit and deduct credits
+  -> create credit_transactions row
+  -> create lab_instances row with QUEUED
+  -> create lab_events row
   -> enqueue provision_lab(instance_id, template_id, user_id)
-  -> worker deploys CDK stack
+  -> worker sets PROVISIONING and deploys CDK stack
+  -> worker sets STARTING and waits for EC2 readiness
   -> worker stores WireGuard config in Secrets Manager
-  -> worker updates lab_instances row to RUNNING
+  -> worker updates lab_instances row to READY
 ```
 
 ## Lab Destroy Flow
@@ -65,12 +68,21 @@ POST /labs/start
 DELETE /labs/{instance_id}
   -> validate Cognito JWT
   -> verify lab ownership
-  -> set lab_instances row to DESTROYING
+  -> set lab_instances row to STOPPED if still queued, otherwise DESTROYING
   -> enqueue destroy_lab(instance_id)
   -> worker runs CDK destroy
   -> worker deletes generated VPN secret
-  -> worker updates lab_instances row to DESTROYED
+  -> worker updates lab_instances row to STOPPED
 ```
+
+## Lifecycle And Observability
+
+The database owns lifecycle truth. `lab_instances` stores current status,
+progress, status message, failure reason, retry count, stack name, IP, secret
+key, and timestamps. `lab_events` is append-only and records important
+provisioning, retry, timeout, failure, expiry, and teardown events. The user UI
+polls status/events for live feedback; the admin console reads the same data for
+operations.
 
 ## Database Boundary
 

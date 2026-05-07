@@ -12,13 +12,20 @@ import { useToast } from "@/components/ui/toast";
 import {
   extractApiErrorMessage,
   getLabConfig,
+  getLabEvents,
   getLabStatus,
   stopLab,
   submitLabFlag,
 } from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
-import type { LabStatusResponse } from "@/lib/types";
-import { cn, formatDateTime, getTimeRemaining, normalizeLabStatus } from "@/lib/utils";
+import type { LabEvent, LabStatusResponse } from "@/lib/types";
+import {
+  cn,
+  formatDateTime,
+  getProvisioningStage,
+  getTimeRemaining,
+  normalizeLabStatus,
+} from "@/lib/utils";
 
 export default function LabDetailPage() {
   const params = useParams<{ id: string }>();
@@ -30,6 +37,7 @@ export default function LabDetailPage() {
   const [flagInput, setFlagInput] = useState("");
   const [isSubmittingFlag, setIsSubmittingFlag] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [events, setEvents] = useState<LabEvent[]>([]);
 
   const loadLab = useCallback(async () => {
     if (!isAuthReady || !tokens?.access_token) {
@@ -41,6 +49,7 @@ export default function LabDetailPage() {
     try {
       const nextLab = await getLabStatus(params.id);
       setLab(nextLab);
+      setEvents(await getLabEvents(params.id));
       setErrorMessage(null);
       return nextLab;
     } catch (error) {
@@ -71,7 +80,7 @@ export default function LabDetailPage() {
       }
 
       const nextStatus = normalizeLabStatus(nextLab.status);
-      if (nextStatus === "DESTROYED" || nextStatus === "FAILED") {
+      if (nextStatus === "STOPPED" || nextStatus === "FAILED") {
         if (intervalId) {
           clearInterval(intervalId);
           intervalId = null;
@@ -218,7 +227,8 @@ export default function LabDetailPage() {
 
   const status = normalizeLabStatus(lab.status);
 
-  if (status === "PROVISIONING") {
+  if (status === "QUEUED" || status === "PROVISIONING" || status === "STARTING") {
+    const progress = Math.max(0, Math.min(100, lab.progress ?? 0));
     return (
       <div className="mx-auto max-w-2xl space-y-6 py-10">
         <Link href="/labs" className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground">
@@ -227,11 +237,32 @@ export default function LabDetailPage() {
         </Link>
         <div className="app-card p-8 text-center">
           <StatusBadge status={lab.status} />
-          <h1 className="mt-5 text-3xl text-foreground">Preparing your environment</h1>
+          <h1 className="mt-5 text-3xl text-foreground">
+            {getProvisioningStage(lab.status, progress)}
+          </h1>
           <p className="mt-3 text-sm text-muted-foreground">
-            Provisioning usually completes in a few minutes. This page can be refreshed safely.
+            {lab.status_message || "Provisioning usually completes in a few minutes."}
           </p>
-          <div className="relative mt-8 h-2 overflow-hidden rounded-full bg-secondary progress-indeterminate" />
+          <div className="mt-8 h-2 overflow-hidden rounded-full bg-secondary">
+            <div
+              className="h-full rounded-full bg-primary transition-all"
+              style={{ width: `${progress}%` }}
+            />
+          </div>
+          <p className="mt-2 text-xs text-muted-foreground">{progress}% complete</p>
+          {events.length ? (
+            <div className="mt-6 space-y-2 text-left">
+              {events.slice(-5).map((event) => (
+                <div key={event.id} className="rounded-lg border border-border bg-secondary/50 p-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-xs uppercase text-muted-foreground">{event.phase}</span>
+                    <span className="text-xs text-muted-foreground">{formatDateTime(event.created_at)}</span>
+                  </div>
+                  <p className="mt-1 text-sm text-foreground">{event.message}</p>
+                </div>
+              ))}
+            </div>
+          ) : null}
           <Button type="button" variant="secondary" className="mt-6" onClick={loadLab}>
             Refresh status
           </Button>
@@ -254,16 +285,16 @@ export default function LabDetailPage() {
     );
   }
 
-  if (status === "DESTROYED" || status === "FAILED") {
+  if (status === "STOPPED" || status === "EXPIRED" || status === "FAILED") {
     return (
       <div className="mx-auto max-w-xl py-10">
         <div className="app-card p-8 text-center">
           <StatusBadge status={lab.status} />
           <h1 className="mt-5 text-3xl text-foreground">
-            {status === "FAILED" ? "Lab failed to provision" : "Lab destroyed"}
+            {status === "FAILED" ? "Lab failed to provision" : status === "EXPIRED" ? "Lab expired" : "Lab stopped"}
           </h1>
           <p className="mt-3 text-sm text-muted-foreground">
-            Start a new lab from the catalog when you are ready.
+            {lab.failure_reason ?? "Start a new lab from the catalog when you are ready."}
           </p>
           <Link
             href="/catalog"

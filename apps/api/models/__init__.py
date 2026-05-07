@@ -3,5 +3,13 @@ from apps.api.models.lab_template import LabTemplate
 from apps.api.models.lab_instance import LabInstance
 from apps.api.models.credit_transaction import CreditTransaction
 from apps.api.models.lab_flag import LabFlag
+from apps.api.models.lab_event import LabEvent
 
-__all__ = ["User", "LabTemplate", "LabInstance", "CreditTransaction", "LabFlag"]
+__all__ = [
+    "User",
+    "LabTemplate",
+    "LabInstance",
+    "CreditTransaction",
+    "LabFlag",
+    "LabEvent",
+]

@@ -104,6 +104,15 @@ export default function AccountPage() {
               {isLoadingUser ? "-" : (user?.credits_balance ?? 0)}
             </p>
           </div>
+          <div className="mt-4 grid gap-3 text-sm text-muted-foreground">
+            <p>Credits are deducted by the API when a lab is queued. Failed provisioning refunds credits through the backend ledger.</p>
+            <a
+              href="mailto:admin@orchestryx.local?subject=Request%20Orchestryx%20credits"
+              className="inline-flex h-10 w-fit items-center rounded-lg border border-border bg-secondary px-4 text-sm text-foreground hover:bg-accent"
+            >
+              Request credits
+            </a>
+          </div>
         </div>
       </section>
 

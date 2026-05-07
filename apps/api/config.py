@@ -35,6 +35,16 @@ def _csv(name: str, default: str) -> list[str]:
     return [item.strip() for item in raw_value.split(",") if item.strip()]
 
 
+def _int(name: str, default: int) -> int:
+    value = os.getenv(name)
+    if value is None or value.strip() == "":
+        return default
+    try:
+        return int(value)
+    except ValueError as exc:
+        raise ConfigError(f"Invalid integer environment variable: {name}") from exc
+
+
 # Database
 DATABASE_URL = _required("DATABASE_URL")
 SQL_ECHO = _bool("SQL_ECHO", default=False)
@@ -58,3 +68,8 @@ DESTROY_QUEUE = _optional("DESTROY_QUEUE", "orchestryx-destroy-lab")
 # Lab provisioning
 CDK_INFRA_PATH = os.getenv("CDK_INFRA_PATH", "infra")
 WG_DNS = _optional("WG_DNS", "1.1.1.1")
+LAB_MAX_ACTIVE_PER_USER = _int("LAB_MAX_ACTIVE_PER_USER", 2)
+LAB_PROVISION_TIMEOUT_SECONDS = _int("LAB_PROVISION_TIMEOUT_SECONDS", 900)
+LAB_STARTUP_RETRY_SECONDS = _int("LAB_STARTUP_RETRY_SECONDS", 30)
+LAB_CLEANUP_STUCK_AFTER_SECONDS = _int("LAB_CLEANUP_STUCK_AFTER_SECONDS", 1200)
+LAB_RETENTION_DAYS = _int("LAB_RETENTION_DAYS", 14)

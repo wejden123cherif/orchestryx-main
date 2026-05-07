@@ -2,6 +2,7 @@ from celery import Celery
 from apps.api.config import (
     AWS_REGION,
     DESTROY_QUEUE,
+    LAB_CLEANUP_STUCK_AFTER_SECONDS,
     PROVISION_QUEUE,
     SQS_DESTROY_URL,
     SQS_PROVISION_URL,
@@ -36,6 +37,12 @@ celery_app.conf.update(
         "destroy-expired-labs-every-5-minutes": {
             "task": "workers.destroy.destroy_expired_labs",
             "schedule": 300.0,
+            "options": {"queue": DESTROY_QUEUE},
+        },
+        "fail-stale-provisioning-labs-every-5-minutes": {
+            "task": "workers.destroy.fail_stale_provisioning_labs",
+            "schedule": 300.0,
+            "args": (LAB_CLEANUP_STUCK_AFTER_SECONDS,),
             "options": {"queue": DESTROY_QUEUE},
         },
     },
