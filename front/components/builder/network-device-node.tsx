@@ -14,7 +14,7 @@ export function NetworkDeviceNode({
   return (
     <div
       className={cn(
-        "w-56 rounded-xl border bg-[#16161f] p-4 text-left transition",
+        "w-56 rounded-xl border bg-card p-4 text-left transition",
         selected ? "border-primary" : "border-border"
       )}
     >

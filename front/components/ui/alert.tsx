@@ -8,8 +8,8 @@ export function Alert({
 }: React.ComponentProps<"div"> & { variant?: "default" | "destructive" | "success" }) {
   const variants = {
     default: "border-border bg-secondary text-foreground",
-    destructive: "border-destructive/35 bg-destructive/10 text-red-200",
-    success: "border-success/35 bg-success/10 text-green-200",
+    destructive: "border-destructive/35 bg-destructive/10 text-destructive",
+    success: "border-success/35 bg-success/10 text-success",
   };
 
   return (

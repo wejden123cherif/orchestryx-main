@@ -46,12 +46,12 @@ export function MachineNode({ data, selected }: NodeProps<MachineFlowNode>) {
           {data.ports.length ? `Ports ${data.ports.join(", ")}` : "No exposed ports"}
         </span>
         {hasCves ? (
-          <span className="inline-flex items-center gap-1 rounded-full border border-destructive/35 bg-destructive/10 px-2 py-0.5 text-xs text-red-300">
+          <span className="inline-flex items-center gap-1 rounded-full border border-destructive/35 bg-destructive/10 px-2 py-0.5 text-xs text-destructive">
             <ShieldAlert className="h-3 w-3" />
             {data.cves.length}
           </span>
         ) : (
-          <span className="rounded-full border border-success/35 bg-success/10 px-2 py-0.5 text-xs text-green-300">
+          <span className="rounded-full border border-success/35 bg-success/10 px-2 py-0.5 text-xs text-success">
             Clean
           </span>
         )}

@@ -3,7 +3,21 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Route } from "next";
-import { Download, ExternalLink, Server, Square, WalletCards } from "lucide-react";
+import {
+  Activity,
+  ArrowRight,
+  Boxes,
+  Clock3,
+  Download,
+  ExternalLink,
+  GitBranch,
+  RefreshCw,
+  Server,
+  ShieldCheck,
+  Square,
+  WalletCards,
+} from "lucide-react";
+import { ConfirmActionDialog } from "@/components/platform/confirm-dialog";
 import { EmptyState } from "@/components/platform/empty-state";
 import { StatusBadge } from "@/components/platform/status-badge";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -17,7 +31,7 @@ import {
   getLabConfig,
   stopLab,
 } from "@/lib/api";
-import type { ActiveLab, LabTemplate } from "@/lib/types";
+import type { ActiveLab, LabTemplate, NormalizedLabStatus } from "@/lib/types";
 import {
   cn,
   getProvisioningStage,
@@ -26,28 +40,67 @@ import {
   normalizeLabStatus,
 } from "@/lib/utils";
 
-function StatCard({ label, value }: { label: string; value: string }) {
+type StatTone = "neutral" | "green" | "amber" | "red";
+
+const toneClasses: Record<StatTone, { icon: string; ring: string }> = {
+  neutral: { icon: "bg-secondary text-foreground", ring: "" },
+  green: { icon: "bg-success/10 text-success", ring: "border-success/15" },
+  amber: { icon: "bg-warning/10 text-warning", ring: "border-warning/15" },
+  red: { icon: "bg-destructive/10 text-destructive", ring: "border-destructive/15" },
+};
+
+function StatCard({
+  label,
+  value,
+  hint,
+  icon: Icon,
+  tone = "neutral",
+}: {
+  label: string;
+  value: string;
+  hint: string;
+  icon: typeof Activity;
+  tone?: StatTone;
+}) {
+  const t = toneClasses[tone];
   return (
-    <div className="app-card p-5">
-      <p className="text-sm text-muted-foreground">{label}</p>
-      <p className="mt-3 text-3xl text-foreground">{value}</p>
+    <div className={cn("app-card p-5", t.ring)}>
+      <div className="flex items-center justify-between">
+        <p className="text-[13px] text-muted-foreground">{label}</p>
+        <span className={cn("flex h-8 w-8 items-center justify-center rounded-lg", t.icon)}>
+          <Icon className="h-4 w-4" />
+        </span>
+      </div>
+      <p className="mt-3 text-2xl font-semibold tracking-tight text-foreground">{value}</p>
+      <p className="mt-1 text-xs text-muted-foreground">{hint}</p>
     </div>
   );
 }
 
-function TableSkeleton() {
+function DashboardSkeleton() {
   return (
-    <div className="app-card overflow-hidden">
-      {Array.from({ length: 4 }).map((_, index) => (
-        <div key={index} className="grid gap-4 border-b border-border p-4 last:border-b-0 md:grid-cols-5">
-          <Skeleton className="h-5 w-40" />
-          <Skeleton className="h-5 w-24" />
-          <Skeleton className="h-5 w-24" />
-          <Skeleton className="h-5 w-28" />
-          <Skeleton className="h-9 w-36" />
-        </div>
-      ))}
+    <div className="space-y-6">
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <div key={i} className="app-card p-5">
+            <Skeleton className="h-4 w-24" />
+            <Skeleton className="mt-4 h-7 w-14" />
+            <Skeleton className="mt-3 h-3 w-36" />
+          </div>
+        ))}
+      </div>
+      <div className="app-card p-5">
+        <Skeleton className="h-5 w-40" />
+        <Skeleton className="mt-5 h-28 w-full" />
+      </div>
     </div>
+  );
+}
+
+function statusCounts(labs: ActiveLab[]) {
+  return labs.reduce<Record<NormalizedLabStatus, number>>(
+    (acc, lab) => { acc[normalizeLabStatus(lab.status)] += 1; return acc; },
+    { QUEUED: 0, PROVISIONING: 0, STARTING: 0, READY: 0, DESTROYING: 0, STOPPED: 0, EXPIRED: 0, FAILED: 0 }
   );
 }
 
@@ -59,11 +112,11 @@ export default function DashboardPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [actionId, setActionId] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [confirmStopId, setConfirmStopId] = useState<string | null>(null);
 
   const loadDashboard = useCallback(async () => {
     setIsLoading(true);
     setErrorMessage(null);
-
     try {
       const [activeLabs, catalog] = await Promise.all([getActiveLabs(), getCatalog()]);
       setLabs(activeLabs);
@@ -75,33 +128,25 @@ export default function DashboardPage() {
     }
   }, []);
 
-  useEffect(() => {
-    void Promise.resolve().then(loadDashboard);
-  }, [loadDashboard]);
+  useEffect(() => { void Promise.resolve().then(loadDashboard); }, [loadDashboard]);
 
-  const templateById = useMemo(
-    () => new Map(templates.map((template) => [template.id, template])),
-    [templates]
-  );
-
+  const templateById = useMemo(() => new Map(templates.map((t) => [t.id, t])), [templates]);
+  const counts = useMemo(() => statusCounts(labs), [labs]);
   const labsThisMonth = useMemo(() => {
     const now = new Date();
     return labs.filter((lab) => {
-      const started = new Date(lab.started_at);
-      return (
-        started.getFullYear() === now.getFullYear() &&
-        started.getMonth() === now.getMonth()
-      );
+      const d = new Date(lab.started_at);
+      return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
     }).length;
   }, [labs]);
+  const quickTemplates = useMemo(() => templates.slice(0, 3), [templates]);
+  const activeProvisioning = counts.QUEUED + counts.PROVISIONING + counts.STARTING;
 
   const downloadConfig = async (instanceId: string) => {
     setActionId(instanceId);
-
     try {
       const config = await getLabConfig(instanceId);
-      const blob = new Blob([config], { type: "text/plain;charset=utf-8" });
-      const url = URL.createObjectURL(blob);
+      const url = URL.createObjectURL(new Blob([config], { type: "text/plain;charset=utf-8" }));
       const anchor = document.createElement("a");
       anchor.href = url;
       anchor.download = getVpnConfigFilename(instanceId);
@@ -109,11 +154,7 @@ export default function DashboardPage() {
       URL.revokeObjectURL(url);
       toast({ title: "VPN config downloaded", tone: "success" });
     } catch (error) {
-      toast({
-        title: "Config unavailable",
-        description: extractApiErrorMessage(error),
-        tone: "error",
-      });
+      toast({ title: "Config unavailable", description: extractApiErrorMessage(error), tone: "error" });
     } finally {
       setActionId(null);
     }
@@ -121,17 +162,12 @@ export default function DashboardPage() {
 
   const stop = async (instanceId: string) => {
     setActionId(instanceId);
-
     try {
       await stopLab(instanceId);
       toast({ title: "Destroy requested", tone: "success" });
       await loadDashboard();
     } catch (error) {
-      toast({
-        title: "Destroy failed",
-        description: extractApiErrorMessage(error),
-        tone: "error",
-      });
+      toast({ title: "Destroy failed", description: extractApiErrorMessage(error), tone: "error" });
     } finally {
       setActionId(null);
     }
@@ -141,142 +177,255 @@ export default function DashboardPage() {
     <div className="space-y-6">
       <header className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-3xl text-foreground">Dashboard</h1>
+          <h1 className="text-2xl font-semibold tracking-tight text-foreground">Dashboard</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Provisioning, credits, and active lab sessions.
+            Active labs, credits, and quick access to the Orchestryx workspace.
           </p>
         </div>
-        <span className="inline-flex w-fit items-center gap-2 rounded-full border border-border bg-card px-3 py-1.5 text-sm text-foreground">
-          <WalletCards className="h-4 w-4 text-primary" />
-          {isLoadingUser ? <Skeleton className="h-4 w-20" /> : `${user?.credits_balance ?? 0} credits`}
-        </span>
+        <div className="flex flex-wrap gap-2">
+          <Button type="button" variant="secondary" size="sm" onClick={loadDashboard} disabled={isLoading}>
+            <RefreshCw className={cn("h-3.5 w-3.5", isLoading && "animate-spin")} />
+            Refresh
+          </Button>
+          <Link
+            href="/builder"
+            className={cn(buttonVariants.secondary, "inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-xs font-medium")}
+          >
+            <GitBranch className="h-3.5 w-3.5" />
+            Build topology
+          </Link>
+          <Link
+            href="/catalog"
+            className={cn(buttonVariants.primary, "inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-xs font-medium")}
+          >
+            <Boxes className="h-3.5 w-3.5" />
+            Start lab
+          </Link>
+        </div>
       </header>
 
       {errorMessage ? (
-        <div className="rounded-lg border border-destructive/35 bg-destructive/10 px-4 py-3 text-sm text-red-300">
+        <div className="rounded-xl border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive">
           {errorMessage}
         </div>
       ) : null}
 
-      <section className="grid gap-4 md:grid-cols-3">
-        <StatCard label="Active Labs" value={isLoading ? "-" : String(labs.length)} />
-        <StatCard
-          label="Credits Balance"
-          value={isLoadingUser ? "-" : String(user?.credits_balance ?? 0)}
-        />
-        <StatCard label="Labs This Month" value={isLoading ? "-" : String(labsThisMonth)} />
-      </section>
+      {isLoading ? (
+        <DashboardSkeleton />
+      ) : (
+        <>
+          <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <StatCard
+              label="Active labs"
+              value={String(labs.length)}
+              hint={`${counts.READY} ready, ${activeProvisioning} provisioning`}
+              icon={Server}
+              tone="green"
+            />
+            <StatCard
+              label="Credits balance"
+              value={isLoadingUser ? "-" : String(user?.credits_balance ?? 0)}
+              hint="Enforced by the API before each launch."
+              icon={WalletCards}
+            />
+            <StatCard
+              label="Labs this month"
+              value={String(labsThisMonth)}
+              hint="Current account activity."
+              icon={Activity}
+            />
+            <StatCard
+              label="Needs attention"
+              value={String(counts.FAILED + counts.EXPIRED)}
+              hint="Failed or expired sessions."
+              icon={ShieldCheck}
+              tone={counts.FAILED > 0 ? "red" : counts.EXPIRED > 0 ? "amber" : "neutral"}
+            />
+          </section>
 
-      <section className="space-y-3">
-        <div className="flex items-center justify-between">
-          <h2 className="text-xl text-foreground">Active labs</h2>
-          <Link
-            href="/catalog"
-            className={cn(buttonVariants.primary, "inline-flex h-9 items-center rounded-lg px-3 text-sm")}
-          >
-            Start your first lab
-          </Link>
-        </div>
+          <section className="grid gap-6 xl:grid-cols-[1fr_340px]">
+            <div className="app-card overflow-hidden">
+              <div className="flex items-center justify-between border-b border-border px-5 py-4">
+                <div>
+                  <h2 className="text-sm font-semibold text-foreground">Active sessions</h2>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    Status, VPN access, and teardown controls.
+                  </p>
+                </div>
+                <Link href="/labs" className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground">
+                  All labs
+                  <ArrowRight className="h-3 w-3" />
+                </Link>
+              </div>
 
-        {isLoading ? (
-          <TableSkeleton />
-        ) : labs.length ? (
-          <div className="app-card overflow-hidden">
-            <div className="hidden grid-cols-[1.4fr_0.8fr_0.8fr_1fr] gap-4 border-b border-border px-4 py-3 text-sm text-muted-foreground md:grid">
-              <span>Name</span>
-              <span>Status</span>
-              <span>Time remaining</span>
-              <span className="text-right">Actions</span>
-            </div>
-            {labs.map((lab, index) => {
-              const template = templateById.get(lab.template_id);
-              const name = template?.title ?? lab.template_id;
+              {labs.length ? (
+                <div className="overflow-x-auto">
+                  <div className="min-w-[720px]">
+                    <div className="grid grid-cols-[1.4fr_0.7fr_0.7fr_0.6fr_1fr] gap-3 border-b border-border bg-muted/30 px-5 py-2.5 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+                      <span>Lab</span>
+                      <span>Status</span>
+                      <span>Time left</span>
+                      <span>Progress</span>
+                      <span className="text-right">Actions</span>
+                    </div>
+                    {labs.map((lab) => {
+                      const template = templateById.get(lab.template_id);
+                      const name = template?.title ?? lab.template_id;
+                      const normalized = normalizeLabStatus(lab.status);
 
-              return (
-                <div
-                  key={lab.instance_id}
-                  className={cn(
-                    "grid gap-3 px-4 py-4 text-sm md:grid-cols-[1.4fr_0.8fr_0.8fr_1fr] md:items-center",
-                    index % 2 === 1 && "bg-secondary/35"
-                  )}
-                >
-                  <Link
-                    href={`/labs/${lab.instance_id}` as Route}
-                    className="min-w-0 text-foreground hover:text-indigo-200"
-                  >
-                    <span className="block truncate">{name}</span>
-                    <span className="mono block truncate text-xs text-muted-foreground">
-                      {lab.instance_id}
-                    </span>
-                  </Link>
-                  <StatusBadge status={lab.status} />
-                  <div>
-                    <span className="text-muted-foreground">{getTimeRemaining(lab.expires_at)}</span>
-                    {normalizeLabStatus(lab.status) !== "READY" ? (
-                      <p className="text-xs text-muted-foreground">
-                        {getProvisioningStage(lab.status, lab.progress)} - {lab.progress}%
-                      </p>
-                    ) : null}
-                  </div>
-                  <div className="flex flex-wrap gap-2 md:justify-end">
-                    {lab.challenge_url ? (
-                      <a
-                        href={lab.challenge_url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className={cn(
-                          buttonVariants.secondary,
-                          "inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-lg px-3 text-xs font-medium"
-                        )}
-                      >
-                        <ExternalLink className="h-3.5 w-3.5" />
-                        Open
-                      </a>
-                    ) : null}
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="secondary"
-                      disabled={actionId === lab.instance_id || normalizeLabStatus(lab.status) !== "READY"}
-                      onClick={() => downloadConfig(lab.instance_id)}
-                    >
-                      <Download className="h-3.5 w-3.5" />
-                      VPN Config
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="danger"
-                      disabled={
-                        actionId === lab.instance_id ||
-                        ["FAILED", "EXPIRED", "STOPPED"].includes(normalizeLabStatus(lab.status))
-                      }
-                      onClick={() => stop(lab.instance_id)}
-                    >
-                      <Square className="h-3.5 w-3.5" />
-                      Stop
-                    </Button>
+                      return (
+                        <div
+                          key={lab.instance_id}
+                          className="grid grid-cols-[1.4fr_0.7fr_0.7fr_0.6fr_1fr] items-center gap-3 border-b border-border px-5 py-3.5 text-sm last:border-b-0 hover:bg-muted/20"
+                        >
+                          <Link href={`/labs/${lab.instance_id}` as Route} className="min-w-0">
+                            <span className="block truncate text-[13px] font-medium text-foreground">{name}</span>
+                            <span className="mono mt-0.5 block truncate text-[11px] text-muted-foreground">
+                              {lab.instance_id}
+                            </span>
+                          </Link>
+                          <StatusBadge status={lab.status} />
+                          <span className="text-xs text-muted-foreground">{getTimeRemaining(lab.expires_at)}</span>
+                          <div>
+                            <div className="h-1.5 overflow-hidden rounded-full bg-secondary">
+                              <div
+                                className={cn(
+                                  "h-full rounded-full transition-all",
+                                  normalized === "FAILED" ? "bg-destructive" : "bg-primary"
+                                )}
+                                style={{ width: `${Math.max(4, Math.min(100, lab.progress))}%` }}
+                              />
+                            </div>
+                            {normalized !== "READY" && (
+                              <p className="mt-1 text-[10px] text-muted-foreground">
+                                {getProvisioningStage(lab.status, lab.progress)}
+                              </p>
+                            )}
+                          </div>
+                          <div className="flex flex-wrap justify-end gap-1.5">
+                            {lab.challenge_url ? (
+                              <a
+                                href={lab.challenge_url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className={cn(buttonVariants.secondary, "inline-flex h-7 shrink-0 items-center gap-1 rounded-md px-2 text-[11px] font-medium")}
+                              >
+                                <ExternalLink className="h-3 w-3" />
+                                Open
+                              </a>
+                            ) : null}
+                            <Button
+                              type="button" size="sm" variant="secondary"
+                              className="h-7 rounded-md px-2 text-[11px]"
+                              disabled={actionId === lab.instance_id || normalized !== "READY"}
+                              onClick={() => downloadConfig(lab.instance_id)}
+                            >
+                              <Download className="h-3 w-3" />
+                              VPN
+                            </Button>
+                            <Button
+                              type="button" size="sm" variant="danger"
+                              className="h-7 rounded-md px-2 text-[11px]"
+                              disabled={actionId === lab.instance_id || ["FAILED", "EXPIRED", "STOPPED"].includes(normalized)}
+                              onClick={() => setConfirmStopId(lab.instance_id)}
+                            >
+                              <Square className="h-3 w-3" />
+                              Stop
+                            </Button>
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
-              );
-            })}
-          </div>
-        ) : (
-          <EmptyState
-            icon={Server}
-            title="No active labs yet"
-            description="Start a template from the catalog. Running environments, VPN configuration, and teardown actions will appear here."
-            action={
-              <Link
-                href="/catalog"
-                className={cn(buttonVariants.primary, "inline-flex h-10 items-center rounded-lg px-4 text-sm")}
-              >
-                Browse Catalog
-              </Link>
-            }
-          />
-        )}
-      </section>
+              ) : (
+                <div className="px-6 py-10">
+                  <EmptyState
+                    icon={Server}
+                    title="No active labs"
+                    description="Start a template from the catalog. Running environments and VPN configuration will appear here."
+                    action={
+                      <Link
+                        href="/catalog"
+                        className={cn(buttonVariants.primary, "inline-flex h-9 items-center rounded-lg px-4 text-sm")}
+                      >
+                        Browse Catalog
+                      </Link>
+                    }
+                  />
+                </div>
+              )}
+            </div>
+
+            <aside className="space-y-4">
+              <div className="app-card p-5">
+                <div className="flex items-center justify-between">
+                  <h2 className="text-sm font-semibold text-foreground">Quick launch</h2>
+                  <Clock3 className="h-4 w-4 text-muted-foreground/50" />
+                </div>
+                <div className="mt-4 space-y-2">
+                  {quickTemplates.length ? (
+                    quickTemplates.map((template) => (
+                      <Link
+                        key={template.id}
+                        href={`/catalog/${template.id}` as Route}
+                        className="group flex items-center justify-between gap-3 rounded-lg border border-border bg-secondary/30 p-3 transition hover:border-primary/20 hover:bg-secondary/60"
+                      >
+                        <span className="min-w-0">
+                          <span className="block truncate text-[13px] font-medium text-foreground">{template.title}</span>
+                          <span className="mt-0.5 block text-[11px] text-muted-foreground">
+                            {template.difficulty} &middot; {template.credits_cost} credits
+                          </span>
+                        </span>
+                        <ArrowRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground/40 transition group-hover:text-primary" />
+                      </Link>
+                    ))
+                  ) : (
+                    <p className="py-2 text-xs text-muted-foreground">Templates load from the API.</p>
+                  )}
+                </div>
+              </div>
+
+              <div className="app-card p-5">
+                <h2 className="text-sm font-semibold text-foreground">Workspace</h2>
+                <div className="mt-3 grid gap-0.5">
+                  {[
+                    { label: "Browse catalog", href: "/catalog", icon: Boxes },
+                    { label: "Manage labs", href: "/labs", icon: Server },
+                    { label: "Build topology", href: "/builder", icon: GitBranch },
+                    { label: "Account & credits", href: "/account", icon: WalletCards },
+                  ].map((item) => {
+                    const Icon = item.icon;
+                    return (
+                      <Link
+                        key={item.href}
+                        href={item.href as Route}
+                        className="flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-[13px] text-muted-foreground transition hover:bg-secondary hover:text-foreground"
+                      >
+                        <Icon className="h-4 w-4" />
+                        {item.label}
+                      </Link>
+                    );
+                  })}
+                </div>
+              </div>
+            </aside>
+          </section>
+        </>
+      )}
+
+      <ConfirmActionDialog
+        open={Boolean(confirmStopId)}
+        onOpenChange={(open) => { if (!open) setConfirmStopId(null); }}
+        title="Stop lab environment?"
+        description="This will queue teardown of the lab. AWS resources will be cleaned up and the session will end."
+        confirmLabel="Stop lab"
+        loading={Boolean(actionId)}
+        onConfirm={() => {
+          if (confirmStopId) void stop(confirmStopId);
+          setConfirmStopId(null);
+        }}
+      />
     </div>
   );
 }

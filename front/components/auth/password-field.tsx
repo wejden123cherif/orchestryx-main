@@ -28,10 +28,8 @@ export function PasswordField({
   const [isVisible, setIsVisible] = useState(false);
 
   return (
-    <div className="space-y-2">
-      <Label htmlFor={id}>
-        {label}
-      </Label>
+    <div className="space-y-1.5">
+      <Label htmlFor={id}>{label}</Label>
       <div className="relative">
         <Input
           id={id}
@@ -41,19 +39,15 @@ export function PasswordField({
           onChange={onChange}
           autoComplete={autoComplete}
           required
-          className="h-11 pr-11"
+          className="h-10 pr-10"
         />
         <button
           type="button"
           onClick={() => setIsVisible((v) => !v)}
-          className="absolute inset-y-0 right-0 flex w-11 items-center justify-center text-muted-foreground transition hover:text-foreground"
+          className="absolute inset-y-0 right-0 flex w-10 items-center justify-center text-muted-foreground/50 transition hover:text-foreground"
           aria-label={isVisible ? "Hide password" : "Show password"}
         >
-          {isVisible ? (
-            <EyeOff className="h-4 w-4" />
-          ) : (
-            <Eye className="h-4 w-4" />
-          )}
+          {isVisible ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
         </button>
       </div>
       {helperText ? (

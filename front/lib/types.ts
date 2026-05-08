@@ -564,9 +564,11 @@ export interface AwsMetricPoint {
 
 export type CatalogFilter =
   | "All"
-  | "Web"
-  | "Network"
+  | "Web App"
+  | "CI/CD"
+  | "VulnHub"
   | "Active Directory"
+  | "Network"
   | "DFIR"
   | "Malware";
 

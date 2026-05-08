@@ -38,9 +38,5 @@ export default function ProtectedLayout({
     );
   }
 
-  if (pathname?.startsWith("/admin")) {
-    return <>{children}</>;
-  }
-
   return <ProtectedShell>{children}</ProtectedShell>;
 }

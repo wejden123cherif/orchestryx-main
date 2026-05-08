@@ -1,44 +1,48 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
 import {
-  Alert,
-  AppLayout,
-  Badge,
-  Box,
-  BreadcrumbGroup,
-  Button,
-  ButtonDropdown,
-  Cards,
-  CollectionPreferences,
-  ColumnLayout,
-  Container,
-  ContentLayout,
-  CopyToClipboard,
-  Flashbar,
-  FormField,
-  Header,
-  HelpPanel,
-  KeyValuePairs,
-  Link,
-  Modal,
-  Pagination,
-  PropertyFilter,
-  Select,
-  SideNavigation,
-  SpaceBetween,
-  Spinner,
-  SplitPanel,
-  StatusIndicator,
-  Table,
-  Tabs,
-  Textarea,
-  TopNavigation,
-} from "@cloudscape-design/components";
-import type { FlashbarProps } from "@cloudscape-design/components/flashbar";
-import type { PropertyFilterProps } from "@cloudscape-design/components/property-filter";
-import type { TableProps } from "@cloudscape-design/components/table";
+  Activity,
+  AlertTriangle,
+  ArrowUpRight,
+  CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
+  Clock,
+  Cloud,
+  Copy,
+  CreditCard,
+  Database,
+  DollarSign,
+  FileText,
+  Globe,
+  HardDrive,
+  Layers,
+  Loader2,
+  Lock,
+  Network,
+  RefreshCw,
+  Search,
+  Server,
+  Settings,
+  Shield,
+  Square,
+  Users,
+  XCircle,
+} from "lucide-react";
+import { StatusBadge } from "@/components/platform/status-badge";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   adjustAdminUserCredits,
   adminExtendLabTtl,
@@ -58,559 +62,507 @@ import type {
   AdminOverview,
   AdminUser,
   AwsInstance,
-  AwsLoadBalancer,
   AwsOverview,
   AwsSecurityGroup,
-  AwsTargetGroup,
   CreditTransaction,
   LabEvent,
   ProvisioningJob,
 } from "@/lib/types";
-import { formatDateTime } from "@/lib/utils";
+import { cn, formatDateTime } from "@/lib/utils";
 import { useAuth } from "@/hooks/useAuth";
 
-type AdminSection =
+// ─── Types ──────────────────────────────────────────────────────────────────
+
+type AdminTab =
   | "overview"
-  | "compute"
-  | "networking"
-  | "security"
-  | "storage"
   | "labs"
   | "users"
+  | "infra"
   | "billing"
   | "jobs"
   | "logs"
   | "settings";
 
-type InspectorResource =
-  | { type: "EC2 instance"; title: string; subtitle: string; item: AwsInstance }
-  | { type: "Security group"; title: string; subtitle: string; item: AwsSecurityGroup }
-  | { type: "Lab"; title: string; subtitle: string; item: AdminLab }
-  | { type: "User"; title: string; subtitle: string; item: AdminUser }
-  | { type: "Provisioning job"; title: string; subtitle: string; item: ProvisioningJob }
-  | { type: "Load balancer"; title: string; subtitle: string; item: AwsLoadBalancer }
-  | { type: "Target group"; title: string; subtitle: string; item: AwsTargetGroup };
+type DetailPanel =
+  | { kind: "lab"; item: AdminLab }
+  | { kind: "user"; item: AdminUser }
+  | { kind: "instance"; item: AwsInstance }
+  | { kind: "sg"; item: AwsSecurityGroup }
+  | { kind: "job"; item: ProvisioningJob }
+  | null;
 
-const sectionLabels: Record<AdminSection, string> = {
-  overview: "Overview",
-  compute: "Compute",
-  networking: "Networking",
-  security: "Security Groups",
-  storage: "Storage",
-  labs: "Labs",
-  users: "Users",
-  billing: "Credits / Billing",
-  jobs: "Provisioning Jobs",
-  logs: "Logs / Debug",
-  settings: "Settings",
-};
+type Toast = { id: string; type: "success" | "error" | "warning"; title: string; message: string };
 
-const defaultQuery: PropertyFilterProps.Query = { tokens: [], operation: "and" };
+// ─── Helpers ────────────────────────────────────────────────────────────────
 
 function fmt(value?: string | null): string {
-  return value ? formatDateTime(value) : "Unavailable";
+  return value ? formatDateTime(value) : "—";
 }
 
 function money(value?: number | null): string {
-  return typeof value === "number" ? `$${value.toFixed(2)}` : "n/a";
+  return typeof value === "number" ? `$${value.toFixed(2)}` : "—";
 }
 
 function compact(value?: string | null, chars = 16): string {
-  if (!value) return "-";
-  return value.length > chars ? `${value.slice(0, chars)}...` : value;
+  if (!value) return "—";
+  return value.length > chars ? `${value.slice(0, chars)}…` : value;
 }
 
-function statusType(value?: string | null): "success" | "warning" | "error" | "info" {
-  const normalized = String(value ?? "").toUpperCase();
-  if (["FAILED", "ERROR", "ALARM", "ROLLBACK_COMPLETE", "HIGH"].includes(normalized)) return "error";
-  if (["QUEUED", "PROVISIONING", "STARTING", "DESTROYING", "MEDIUM", "LAGGING", "ATTENTION"].includes(normalized)) return "warning";
-  if (["READY", "RUNNING", "ACTIVE", "OK", "LOW", "LIVE", "CREATE_COMPLETE"].includes(normalized)) return "success";
-  return "info";
+function copyText(text: string) {
+  void navigator.clipboard.writeText(text);
 }
 
-function Status({ value }: { value?: string | null }) {
-  return <StatusIndicator type={statusType(value)}>{value ?? "unknown"}</StatusIndicator>;
+function statusColor(value?: string | null): "green" | "amber" | "red" | "blue" | "neutral" {
+  const n = String(value ?? "").toUpperCase();
+  if (["FAILED", "ERROR", "ALARM", "HIGH", "ROLLBACK_COMPLETE"].includes(n)) return "red";
+  if (["QUEUED", "PROVISIONING", "STARTING", "DESTROYING", "MEDIUM", "LAGGING"].includes(n)) return "amber";
+  if (["READY", "RUNNING", "ACTIVE", "OK", "LOW", "LIVE", "CREATE_COMPLETE"].includes(n)) return "green";
+  return "neutral";
 }
 
-function RiskBadge({ value }: { value?: string | null }) {
-  const color = value === "high" ? "red" : value === "medium" ? "severity-medium" : "green";
-  return <Badge color={color}>{value ?? "low"}</Badge>;
-}
+// ─── Reusable UI pieces ─────────────────────────────────────────────────────
 
-function ConsoleLink({ href, label = "Open in AWS Console" }: { href?: string; label?: string }) {
-  if (!href) return <Box color="text-status-inactive">No console link</Box>;
-  return (
-    <Link href={href} external>
-      {label}
-    </Link>
-  );
-}
-
-function tokenValue(token: PropertyFilterProps.Query["tokens"][number]): string {
-  if (Array.isArray(token.value)) return token.value.join(" ");
-  return String(token.value ?? "");
-}
-
-function matchesQuery<T>(
-  item: T,
-  query: PropertyFilterProps.Query,
-  freeText: (item: T) => string,
-  fields: Record<string, (item: T) => string | number | null | undefined>
-): boolean {
-  if (!query.tokens.length) return true;
-  const checks = query.tokens.map((token) => {
-    const needle = tokenValue(token).toLowerCase();
-    if (!needle) return true;
-    const source = token.propertyKey && fields[token.propertyKey] ? String(fields[token.propertyKey](item) ?? "") : freeText(item);
-    const haystack = source.toLowerCase();
-    const contains = haystack.includes(needle);
-    return token.operator === "!:" || token.operator === "!=" ? !contains : contains;
-  });
-  return query.operation === "or" ? checks.some(Boolean) : checks.every(Boolean);
-}
-
-function usePagedItems<T>(
-  items: T[],
-  pageSize: number,
-  query: PropertyFilterProps.Query,
-  freeText: (item: T) => string,
-  fields: Record<string, (item: T) => string | number | null | undefined>
-) {
-  const [currentPageIndex, setCurrentPageIndex] = useState(1);
-  const filtered = useMemo(() => items.filter((item) => matchesQuery(item, query, freeText, fields)), [fields, freeText, items, query]);
-  const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
-  const page = Math.min(currentPageIndex, pageCount);
-  const visible = filtered.slice((page - 1) * pageSize, page * pageSize);
-  return { filtered, visible, page, pageCount, setCurrentPageIndex };
-}
-
-function EmptyState({ title, detail }: { title: string; detail: string }) {
-  return (
-    <Box textAlign="center" color="inherit" padding="l">
-      <SpaceBetween size="s">
-        <Box variant="strong">{title}</Box>
-        <Box variant="p" color="inherit">
-          {detail}
-        </Box>
-      </SpaceBetween>
-    </Box>
-  );
-}
-
-function MetricCards({
-  overview,
-  aws,
-  jobs,
-  users,
+function MetricCard({
+  label,
+  value,
+  sub,
+  icon: Icon,
+  tone = "neutral",
 }: {
-  overview: AdminOverview | null;
-  aws: AwsOverview | null;
-  jobs: ProvisioningJob[];
-  users: AdminUser[];
+  label: string;
+  value: string | number;
+  sub?: string;
+  icon: typeof Activity;
+  tone?: "neutral" | "green" | "amber" | "red" | "blue";
 }) {
-  const highRiskGroups = aws?.network.security_groups.filter((group) => group.risk_level === "high").length ?? 0;
-  const runningInstances = aws?.ec2.lab_instances.filter((instance) => instance.state === "running").length ?? 0;
-  const slowJobs = jobs.filter((job) => job.is_slow).length;
-  const activeUsers = users.filter((item) => (item.active_labs ?? 0) > 0).length;
+  const toneStyles = {
+    neutral: "bg-secondary/40 text-muted-foreground",
+    green: "bg-success/10 text-success",
+    amber: "bg-warning/10 text-warning",
+    red: "bg-destructive/10 text-destructive",
+    blue: "bg-primary/10 text-primary",
+  };
 
   return (
-    <ColumnLayout columns={4} variant="text-grid">
-      <Container header={<Header variant="h3">Active labs</Header>}>
-        <Box variant="awsui-key-label">{overview?.labs.active ?? 0}</Box>
-        <Box color="text-body-secondary">{overview?.labs.failed ?? 0} failed, {overview?.labs.queued ?? 0} queued</Box>
-      </Container>
-      <Container header={<Header variant="h3">Compute running</Header>}>
-        <Box variant="awsui-key-label">{runningInstances}</Box>
-        <Box color="text-body-secondary">{aws?.ec2.lab_instances.length ?? 0} tagged hosts</Box>
-      </Container>
-      <Container header={<Header variant="h3">Security exposure</Header>}>
-        <Box variant="awsui-key-label">{highRiskGroups}</Box>
-        <Box color="text-body-secondary">high-risk groups</Box>
-      </Container>
-      <Container header={<Header variant="h3">Spend / jobs</Header>}>
-        <Box variant="awsui-key-label">{money(aws?.costs.total)}</Box>
-        <Box color="text-body-secondary">{slowJobs} slow jobs, {activeUsers} active users</Box>
-      </Container>
-    </ColumnLayout>
+    <div className="app-card flex flex-col gap-3 p-5">
+      <div className="flex items-center justify-between">
+        <span className="text-[12px] font-medium text-muted-foreground">{label}</span>
+        <div className={cn("flex h-8 w-8 items-center justify-center rounded-lg", toneStyles[tone])}>
+          <Icon className="h-4 w-4" />
+        </div>
+      </div>
+      <div>
+        <p className="text-2xl font-semibold tabular-nums text-foreground">{value}</p>
+        {sub && <p className="mt-0.5 text-[12px] text-muted-foreground">{sub}</p>}
+      </div>
+    </div>
   );
 }
 
-function ResourceFilter({
-  query,
-  onChange,
-  count,
-  properties,
-  options = [],
-}: {
-  query: PropertyFilterProps.Query;
-  onChange: (query: PropertyFilterProps.Query) => void;
-  count: number;
-  properties: PropertyFilterProps.FilteringProperty[];
-  options?: PropertyFilterProps.FilteringOption[];
-}) {
-  return (
-    <PropertyFilter
-      query={query}
-      onChange={({ detail }) => onChange(detail)}
-      filteringProperties={properties}
-      filteringOptions={options}
-      countText={`${count} match${count === 1 ? "" : "es"}`}
-      expandToViewport
-      filteringPlaceholder="Filter resources by property or free text"
-      i18nStrings={{
-        filteringAriaLabel: "Filter resources",
-        filteringPlaceholder: "Filter resources",
-        clearFiltersText: "Clear filters",
-        operationAndText: "and",
-        operationOrText: "or",
-        operatorContainsText: "contains",
-        operatorDoesNotContainText: "does not contain",
-        operatorEqualsText: "equals",
-        operatorDoesNotEqualText: "does not equal",
-        editTokenHeader: "Edit filter",
-        propertyText: "Property",
-        operatorText: "Operator",
-        valueText: "Value",
-        cancelActionText: "Cancel",
-        applyActionText: "Apply",
-        allPropertiesLabel: "All properties",
-        tokenLimitShowMore: "Show more",
-        tokenLimitShowFewer: "Show fewer",
-        clearAriaLabel: "Clear",
-        removeTokenButtonAriaLabel: (token) => `Remove token ${token.propertyKey ?? token.value}`,
-        enteredTextLabel: (text) => `Use: ${text}`,
-      }}
-    />
-  );
-}
-
-function Preferences({
-  pageSize,
-  setPageSize,
-}: {
-  pageSize: number;
-  setPageSize: (value: number) => void;
-}) {
-  return (
-    <CollectionPreferences
-      title="Preferences"
-      confirmLabel="Confirm"
-      cancelLabel="Cancel"
-      preferences={{ pageSize }}
-      onConfirm={({ detail }) => setPageSize(detail.pageSize ?? pageSize)}
-      pageSizePreference={{
-        title: "Page size",
-        options: [
-          { value: 10, label: "10 resources" },
-          { value: 25, label: "25 resources" },
-          { value: 50, label: "50 resources" },
-        ],
-      }}
-    />
-  );
-}
-
-function ResourceTable<T>({
+function SectionCard({
   title,
   description,
-  items,
-  filteredCount,
-  page,
-  pageCount,
-  setPage,
-  pageSize,
-  setPageSize,
-  loading,
-  columnDefinitions,
-  trackBy,
-  filter,
   actions,
-  empty,
+  children,
+  className,
 }: {
   title: string;
-  description: string;
-  items: T[];
-  filteredCount: number;
-  page: number;
-  pageCount: number;
-  setPage: (page: number) => void;
-  pageSize: number;
-  setPageSize: (size: number) => void;
-  loading: boolean;
-  columnDefinitions: TableProps.ColumnDefinition<T>[];
-  trackBy: TableProps.TrackBy<T>;
-  filter: React.ReactNode;
+  description?: string;
   actions?: React.ReactNode;
-  empty: React.ReactNode;
+  children: React.ReactNode;
+  className?: string;
 }) {
   return (
-    <Table
-      trackBy={trackBy}
-      loading={loading}
-      loadingText="Loading resources"
-      items={items}
-      columnDefinitions={columnDefinitions}
-      resizableColumns
-      stickyHeader
-      empty={empty}
-      filter={filter}
-      header={
-        <Header
-          variant="h2"
-          counter={`(${filteredCount})`}
-          actions={actions}
-          description={description}
+    <section className={cn("app-card overflow-hidden", className)}>
+      <div className="flex items-center justify-between gap-4 border-b border-border px-5 py-4">
+        <div>
+          <h3 className="text-sm font-semibold text-foreground">{title}</h3>
+          {description && <p className="text-[12px] text-muted-foreground">{description}</p>}
+        </div>
+        {actions && <div className="flex items-center gap-2">{actions}</div>}
+      </div>
+      <div className="p-5">{children}</div>
+    </section>
+  );
+}
+
+function KVRow({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex items-start justify-between gap-4 py-2 text-[13px]">
+      <span className="text-muted-foreground">{label}</span>
+      <span className="text-right font-medium text-foreground">{children}</span>
+    </div>
+  );
+}
+
+function Toasts({ items, onDismiss }: { items: Toast[]; onDismiss: (id: string) => void }) {
+  if (!items.length) return null;
+  return (
+    <div className="fixed bottom-4 right-4 z-50 flex flex-col gap-2">
+      {items.map((t) => (
+        <div
+          key={t.id}
+          className={cn(
+            "flex items-start gap-3 rounded-lg border px-4 py-3 shadow-lg",
+            t.type === "success" && "border-success/30 bg-success/10 text-success",
+            t.type === "error" && "border-destructive/30 bg-destructive/10 text-destructive",
+            t.type === "warning" && "border-warning/30 bg-warning/10 text-warning"
+          )}
         >
-          {title}
-        </Header>
-      }
-      pagination={<Pagination currentPageIndex={page} pagesCount={pageCount} onChange={({ detail }) => setPage(detail.currentPageIndex)} />}
-      preferences={<Preferences pageSize={pageSize} setPageSize={setPageSize} />}
-    />
+          <div className="min-w-0 flex-1">
+            <p className="text-[13px] font-semibold">{t.title}</p>
+            <p className="text-[12px] opacity-80">{t.message}</p>
+          </div>
+          <button type="button" onClick={() => onDismiss(t.id)} className="shrink-0 p-0.5 opacity-60 hover:opacity-100">
+            <XCircle className="h-4 w-4" />
+          </button>
+        </div>
+      ))}
+    </div>
   );
 }
 
-function DetailSplitPanel({
-  resource,
-  labs,
-  events,
+// ─── Data Table ─────────────────────────────────────────────────────────────
+
+function DataTable<T>({
+  data,
+  columns,
+  searchPlaceholder = "Search…",
+  searchFn,
+  pageSize = 10,
+  emptyMessage = "No data",
+  loading,
 }: {
-  resource: InspectorResource | null;
-  labs: AdminLab[];
-  events: LabEvent[];
+  data: T[];
+  columns: {
+    key: string;
+    header: string;
+    cell: (item: T) => React.ReactNode;
+    className?: string;
+  }[];
+  searchPlaceholder?: string;
+  searchFn?: (item: T, query: string) => boolean;
+  pageSize?: number;
+  emptyMessage?: string;
+  loading?: boolean;
 }) {
-  if (!resource) {
-    return (
-      <SplitPanel header="Resource details">
-        <Box color="text-body-secondary">Select a resource to inspect metadata, ownership, links, and debug context.</Box>
-      </SplitPanel>
-    );
-  }
+  const [search, setSearch] = useState("");
+  const [page, setPage] = useState(1);
 
-  if (resource.type === "EC2 instance") {
-    const instance = resource.item;
-    const linkedLab = labs.find(
-      (lab) =>
-        lab.instance_id === instance.lab_instance_id ||
-        lab.cfn_stack_name === instance.stack_name ||
-        Boolean(instance.public_ip && lab.ec2_public_ip === instance.public_ip)
-    );
-    return (
-      <SplitPanel header={`EC2: ${resource.title}`}>
-        <SpaceBetween size="m">
-          <KeyValuePairs
-            columns={3}
-            items={[
-              { label: "Instance ID", value: <CopyToClipboard copyButtonText="Copy" copyErrorText="Copy failed" copySuccessText="Copied" textToCopy={instance.id ?? ""} /> },
-              { label: "State", value: <Status value={instance.state} /> },
-              { label: "Type", value: instance.type ?? "-" },
-              { label: "AZ", value: instance.az ?? "-" },
-              { label: "Public IP", value: instance.public_ip ?? "-" },
-              { label: "Private IP", value: instance.private_ip ?? "-" },
-              { label: "Uptime", value: `${instance.uptime_hours ?? 0}h` },
-              { label: "Estimated running cost", value: money(instance.estimated_running_cost) },
-              { label: "AWS Console", value: <ConsoleLink href={instance.console_url} label="Open instance" /> },
-            ]}
-          />
-          <Container header={<Header variant="h3">Debug ownership</Header>}>
-            {linkedLab ? (
-              <SpaceBetween size="s">
-                <Box>This instance is linked to lab <strong>{linkedLab.template_title}</strong> owned by <strong>{linkedLab.owner_email}</strong>.</Box>
-                <Box>Stack: {linkedLab.cfn_stack_name ?? "-"} · status: {linkedLab.status} · expires: {fmt(linkedLab.expires_at)}</Box>
-              </SpaceBetween>
-            ) : (
-              <Alert type="warning">No local lab row matched this host by lab ID, stack name, or public IP. Treat it as a possible orphan until verified.</Alert>
-            )}
-          </Container>
-          <Tabs
-            tabs={[
-              {
-                id: "network",
-                label: "Networking",
-                content: (
-                  <KeyValuePairs
-                    columns={2}
-                    items={[
-                      { label: "VPC", value: instance.vpc_id ?? "-" },
-                      { label: "Subnet", value: instance.subnet_id ?? "-" },
-                      { label: "Security groups", value: (instance.security_groups ?? []).map((group) => `${group.name} (${group.id})`).join(", ") || "-" },
-                      { label: "Volumes", value: (instance.volume_ids ?? []).join(", ") || "-" },
-                    ]}
-                  />
-                ),
-              },
-              {
-                id: "tags",
-                label: "Tags",
-                content: (
-                  <Table
-                    trackBy="key"
-                    items={Object.entries(instance.tags ?? {}).map(([key, value]) => ({ key, value }))}
-                    columnDefinitions={[
-                      { id: "key", header: "Key", cell: (item) => item.key },
-                      { id: "value", header: "Value", cell: (item) => item.value },
-                    ]}
-                    empty={<EmptyState title="No tags" detail="This resource did not return tags." />}
-                  />
-                ),
-              },
-            ]}
-          />
-        </SpaceBetween>
-      </SplitPanel>
-    );
-  }
+  useEffect(() => setPage(1), [search]);
 
-  if (resource.type === "Security group") {
-    const group = resource.item;
-    return (
-      <SplitPanel header={`Security group: ${resource.title}`}>
-        <SpaceBetween size="m">
-          <KeyValuePairs
-            columns={3}
-            items={[
-              { label: "Group ID", value: <CopyToClipboard copyButtonText="Copy" copyErrorText="Copy failed" copySuccessText="Copied" textToCopy={group.id ?? ""} /> },
-              { label: "VPC", value: group.vpc_id ?? "-" },
-              { label: "Risk", value: <RiskBadge value={group.risk_level} /> },
-              { label: "Attached resources", value: String(group.attached_count ?? 0) },
-              { label: "Inbound rules", value: String(group.ingress_rules ?? 0) },
-              { label: "Outbound rules", value: String(group.egress_rules ?? 0) },
-              { label: "AWS Console", value: <ConsoleLink href={group.console_url} label="Open security group" /> },
-            ]}
-          />
-          <Table
-            trackBy={(item) => `${item.direction}-${item.protocol}-${item.ports}-${item.targets.map((target) => target.value).join(",")}`}
-            items={group.rules ?? []}
-            columnDefinitions={[
-              { id: "direction", header: "Direction", cell: (item) => <Badge>{item.direction}</Badge> },
-              { id: "protocol", header: "Protocol", cell: (item) => item.protocol },
-              { id: "ports", header: "Port/range", cell: (item) => item.ports },
-              { id: "targets", header: "Source / destination", cell: (item) => item.targets.map((target) => `${target.type}: ${target.value}`).join(", ") || "-" },
-              { id: "risk", header: "Risk", cell: (item) => <RiskBadge value={item.risk} /> },
-              { id: "explanation", header: "Explanation", cell: (item) => item.explanation },
-            ]}
-            header={<Header variant="h3">Rule debugger</Header>}
-            empty={<EmptyState title="No rules" detail="This security group did not return ingress or egress rules." />}
-          />
-          <Table
-            trackBy={(item) => item.network_interface_id ?? item.instance_id ?? item.private_ip ?? "attachment"}
-            items={group.attachments ?? []}
-            columnDefinitions={[
-              { id: "eni", header: "Network interface", cell: (item) => item.network_interface_id ?? "-" },
-              { id: "instance", header: "Instance", cell: (item) => item.instance_id ?? "-" },
-              { id: "private", header: "Private IP", cell: (item) => item.private_ip ?? "-" },
-              { id: "status", header: "Status", cell: (item) => <Status value={item.status} /> },
-            ]}
-            header={<Header variant="h3">Attachments</Header>}
-            empty={<Alert type="warning">No attachments found. This group may be unused and safe to review for cleanup.</Alert>}
-          />
-        </SpaceBetween>
-      </SplitPanel>
-    );
-  }
+  const filtered = useMemo(() => {
+    if (!search || !searchFn) return data;
+    const q = search.toLowerCase();
+    return data.filter((item) => searchFn(item, q));
+  }, [data, search, searchFn]);
 
-  if (resource.type === "Lab") {
-    const lab = resource.item;
-    const labEvents = events.filter((event) => event.instance_id === lab.instance_id).slice(0, 12);
-    return (
-      <SplitPanel header={`Lab: ${resource.title}`}>
-        <SpaceBetween size="m">
-          <KeyValuePairs
-            columns={3}
-            items={[
-              { label: "Lab ID", value: <CopyToClipboard copyButtonText="Copy" copyErrorText="Copy failed" copySuccessText="Copied" textToCopy={lab.instance_id} /> },
-              { label: "Owner", value: lab.owner_email },
-              { label: "Status", value: <Status value={String(lab.status)} /> },
-              { label: "Progress", value: `${lab.progress}%` },
-              { label: "Retries", value: String(lab.retry_count ?? 0) },
-              { label: "Public IP", value: lab.ec2_public_ip ?? "-" },
-              { label: "Stack", value: lab.cfn_stack_name ?? "-" },
-              { label: "Expires", value: fmt(lab.expires_at) },
-              { label: "Estimated cost", value: money(lab.estimated_aws_cost) },
-            ]}
-          />
-          {lab.failure_reason ? <Alert type="error">{lab.failure_reason}</Alert> : <Alert type="info">{lab.status_message}</Alert>}
-          <Table
-            trackBy="id"
-            items={labEvents}
-            columnDefinitions={[
-              { id: "time", header: "Time", cell: (item) => fmt(item.created_at) },
-              { id: "level", header: "Level", cell: (item) => <Status value={item.level} /> },
-              { id: "phase", header: "Phase", cell: (item) => item.phase },
-              { id: "message", header: "Message", cell: (item) => item.message },
-            ]}
-            header={<Header variant="h3">Lifecycle events</Header>}
-            empty={<EmptyState title="No events" detail="No recent events were returned for this lab." />}
-          />
-        </SpaceBetween>
-      </SplitPanel>
-    );
-  }
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const safePage = Math.min(page, totalPages);
+  const visible = filtered.slice((safePage - 1) * pageSize, safePage * pageSize);
 
-  if (resource.type === "Provisioning job") {
-    const job = resource.item;
-    return (
-      <SplitPanel header={`Job: ${resource.title}`}>
-        <SpaceBetween size="m">
-          <KeyValuePairs
-            columns={3}
-            items={[
-              { label: "Job ID", value: <CopyToClipboard copyButtonText="Copy" copyErrorText="Copy failed" copySuccessText="Copied" textToCopy={job.id} /> },
-              { label: "Lab", value: job.template_title },
-              { label: "User", value: job.owner_email },
-              { label: "Status", value: <Status value={String(job.status)} /> },
-              { label: "Duration", value: `${job.duration_hours}h` },
-              { label: "Retries", value: String(job.retries) },
-              { label: "Stack", value: job.resource_ids.cloudformation_stack ?? "-" },
-              { label: "Cleanup", value: <Status value={job.cleanup_status} /> },
-              { label: "Slow", value: job.is_slow ? "yes" : "no" },
-            ]}
-          />
-          {job.error ? <Alert type="error">{job.error}</Alert> : <Alert type="info">{job.current_step}</Alert>}
-        </SpaceBetween>
-      </SplitPanel>
-    );
-  }
-
-  if (resource.type === "User") {
-    const user = resource.item;
-    return (
-      <SplitPanel header={`User: ${resource.title}`}>
-        <KeyValuePairs
-          columns={2}
-          items={[
-            { label: "User ID", value: <CopyToClipboard copyButtonText="Copy" copyErrorText="Copy failed" copySuccessText="Copied" textToCopy={user.id} /> },
-            { label: "Email", value: user.email },
-            { label: "Role", value: <Badge>{user.role}</Badge> },
-            { label: "Status", value: <Status value={user.is_disabled ? "disabled" : "active"} /> },
-            { label: "Credits", value: String(user.credits_balance) },
-            { label: "Active labs", value: String(user.active_labs ?? 0) },
-            { label: "Total labs", value: String(user.total_labs ?? 0) },
-            { label: "Created", value: fmt(user.created_at) },
-          ]}
-        />
-      </SplitPanel>
-    );
-  }
-
-  const resourceWithConsole = resource.item as { console_url?: string };
   return (
-    <SplitPanel header={`${resource.type}: ${resource.title}`}>
-      <KeyValuePairs
-        columns={2}
-        items={[
-          { label: "Name", value: resource.title },
-          { label: "Identifier", value: resource.subtitle },
-          { label: "AWS Console", value: <ConsoleLink href={resourceWithConsole.console_url} /> },
-        ]}
-      />
-    </SplitPanel>
+    <div>
+      {searchFn && (
+        <div className="mb-4 flex items-center gap-3">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground/50" />
+            <Input
+              placeholder={searchPlaceholder}
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="pl-9"
+            />
+          </div>
+          <span className="shrink-0 text-[12px] text-muted-foreground">
+            {filtered.length} result{filtered.length !== 1 ? "s" : ""}
+          </span>
+        </div>
+      )}
+
+      <div className="-mx-5 overflow-x-auto">
+        <table className="w-full text-[13px]">
+          <thead>
+            <tr className="border-b border-border bg-secondary/30">
+              {columns.map((col) => (
+                <th
+                  key={col.key}
+                  className={cn("whitespace-nowrap px-5 py-2.5 text-left text-[11px] font-medium uppercase tracking-wider text-muted-foreground", col.className)}
+                >
+                  {col.header}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border">
+            {loading ? (
+              Array.from({ length: 5 }).map((_, i) => (
+                <tr key={i}>
+                  {columns.map((col) => (
+                    <td key={col.key} className="px-5 py-3">
+                      <Skeleton className="h-4 w-full" />
+                    </td>
+                  ))}
+                </tr>
+              ))
+            ) : visible.length === 0 ? (
+              <tr>
+                <td colSpan={columns.length} className="px-5 py-10 text-center text-muted-foreground">
+                  {emptyMessage}
+                </td>
+              </tr>
+            ) : (
+              visible.map((item, i) => (
+                <tr key={i} className="hover:bg-secondary/30 transition-colors">
+                  {columns.map((col) => (
+                    <td key={col.key} className={cn("px-5 py-3 text-foreground", col.className)}>
+                      {col.cell(item)}
+                    </td>
+                  ))}
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {totalPages > 1 && (
+        <div className="mt-4 flex items-center justify-between border-t border-border pt-4">
+          <span className="text-[12px] text-muted-foreground">
+            Page {safePage} of {totalPages}
+          </span>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              disabled={safePage <= 1}
+              onClick={() => setPage(safePage - 1)}
+              className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground hover:bg-secondary disabled:opacity-40"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              disabled={safePage >= totalPages}
+              onClick={() => setPage(safePage + 1)}
+              className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground hover:bg-secondary disabled:opacity-40"
+            >
+              <ChevronRight className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
+
+// ─── Detail panels (render inside Dialog) ───────────────────────────────────
+
+function LabDetail({ lab, events }: { lab: AdminLab; events: LabEvent[] }) {
+  const labEvents = events.filter((e) => e.instance_id === lab.instance_id).slice(0, 10);
+  return (
+    <div className="space-y-5">
+      <div className="grid grid-cols-2 gap-x-8 gap-y-1 divide-y divide-border sm:grid-cols-3">
+        <KVRow label="Lab ID">
+          <button type="button" onClick={() => copyText(lab.instance_id)} className="inline-flex items-center gap-1 text-primary hover:underline">
+            {compact(lab.instance_id, 20)} <Copy className="h-3 w-3" />
+          </button>
+        </KVRow>
+        <KVRow label="Owner">{lab.owner_email}</KVRow>
+        <KVRow label="Status"><StatusBadge status={String(lab.status)} /></KVRow>
+        <KVRow label="Progress">{lab.progress}%</KVRow>
+        <KVRow label="Retries">{lab.retry_count ?? 0}</KVRow>
+        <KVRow label="Public IP">{lab.ec2_public_ip ?? "—"}</KVRow>
+        <KVRow label="Stack">{lab.cfn_stack_name ?? "—"}</KVRow>
+        <KVRow label="Expires">{fmt(lab.expires_at)}</KVRow>
+        <KVRow label="Est. cost">{money(lab.estimated_aws_cost)}</KVRow>
+      </div>
+      {lab.failure_reason ? (
+        <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-[13px] text-destructive">{lab.failure_reason}</div>
+      ) : (
+        <div className="rounded-lg border border-border bg-secondary/30 px-4 py-3 text-[13px] text-muted-foreground">{lab.status_message}</div>
+      )}
+      {labEvents.length > 0 && (
+        <div>
+          <h4 className="mb-2 text-[12px] font-medium uppercase tracking-wider text-muted-foreground">Lifecycle events</h4>
+          <div className="max-h-48 space-y-1 overflow-y-auto">
+            {labEvents.map((e) => (
+              <div key={e.id} className="flex items-start gap-3 rounded-lg bg-secondary/20 px-3 py-2 text-[12px]">
+                <Badge tone={e.level === "error" ? "red" : e.level === "warning" ? "amber" : "neutral"} className="shrink-0 mt-0.5">{e.level}</Badge>
+                <div className="min-w-0 flex-1">
+                  <span className="text-muted-foreground">{fmt(e.created_at)}</span>
+                  <span className="mx-1.5 text-muted-foreground/40">·</span>
+                  <span className="font-medium text-foreground">{e.phase}</span>
+                  <p className="text-muted-foreground">{e.message}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function UserDetail({ user, labs }: { user: AdminUser; labs: AdminLab[] }) {
+  const userLabs = labs.filter((l) => l.owner_id === user.id);
+  return (
+    <div className="space-y-4">
+      <div className="divide-y divide-border">
+        <KVRow label="User ID">
+          <button type="button" onClick={() => copyText(user.id)} className="inline-flex items-center gap-1 text-primary hover:underline">
+            {compact(user.id, 20)} <Copy className="h-3 w-3" />
+          </button>
+        </KVRow>
+        <KVRow label="Email">{user.email}</KVRow>
+        <KVRow label="Role"><Badge tone={user.role === "admin" ? "amber" : "neutral"}>{user.role}</Badge></KVRow>
+        <KVRow label="Status"><Badge tone={user.is_disabled ? "red" : "green"}>{user.is_disabled ? "disabled" : "active"}</Badge></KVRow>
+        <KVRow label="Credits">{user.credits_balance}</KVRow>
+        <KVRow label="Active labs">{user.active_labs ?? 0}</KVRow>
+        <KVRow label="Total labs">{user.total_labs ?? 0}</KVRow>
+        <KVRow label="Created">{fmt(user.created_at)}</KVRow>
+      </div>
+      {userLabs.length > 0 && (
+        <div>
+          <h4 className="mb-2 text-[12px] font-medium uppercase tracking-wider text-muted-foreground">Labs ({userLabs.length})</h4>
+          <div className="space-y-1">
+            {userLabs.slice(0, 5).map((l) => (
+              <div key={l.instance_id} className="flex items-center justify-between rounded-lg bg-secondary/20 px-3 py-2 text-[12px]">
+                <span className="font-medium text-foreground">{l.template_title}</span>
+                <StatusBadge status={String(l.status)} />
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function InstanceDetail({ instance, labs }: { instance: AwsInstance; labs: AdminLab[] }) {
+  const linkedLab = labs.find(
+    (l) => l.instance_id === instance.lab_instance_id || l.cfn_stack_name === instance.stack_name || Boolean(instance.public_ip && l.ec2_public_ip === instance.public_ip)
+  );
+  return (
+    <div className="space-y-4">
+      <div className="divide-y divide-border">
+        <KVRow label="Instance ID">
+          <button type="button" onClick={() => copyText(instance.id ?? "")} className="inline-flex items-center gap-1 text-primary hover:underline">
+            {instance.id ?? "—"} <Copy className="h-3 w-3" />
+          </button>
+        </KVRow>
+        <KVRow label="State"><Badge tone={statusColor(instance.state)}>{instance.state ?? "unknown"}</Badge></KVRow>
+        <KVRow label="Type">{instance.type ?? "—"}</KVRow>
+        <KVRow label="AZ">{instance.az ?? "—"}</KVRow>
+        <KVRow label="Public IP">{instance.public_ip ?? "—"}</KVRow>
+        <KVRow label="Private IP">{instance.private_ip ?? "—"}</KVRow>
+        <KVRow label="Uptime">{instance.uptime_hours ?? 0}h</KVRow>
+        <KVRow label="Est. cost">{money(instance.estimated_running_cost)}</KVRow>
+      </div>
+      {linkedLab ? (
+        <div className="rounded-lg border border-success/30 bg-success/5 px-4 py-3 text-[13px] text-foreground">
+          Linked to <span className="font-semibold">{linkedLab.template_title}</span> owned by <span className="font-semibold">{linkedLab.owner_email}</span>
+          <span className="text-muted-foreground"> · {String(linkedLab.status)} · expires {fmt(linkedLab.expires_at)}</span>
+        </div>
+      ) : (
+        <div className="rounded-lg border border-warning/30 bg-warning/5 px-4 py-3 text-[13px] text-warning">
+          No local lab matched this host. Possible orphan — verify before cleanup.
+        </div>
+      )}
+      {instance.console_url && (
+        <a href={instance.console_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 text-[13px] text-primary hover:underline">
+          Open in AWS Console <ArrowUpRight className="h-3 w-3" />
+        </a>
+      )}
+    </div>
+  );
+}
+
+function SGDetail({ sg }: { sg: AwsSecurityGroup }) {
+  return (
+    <div className="space-y-4">
+      <div className="divide-y divide-border">
+        <KVRow label="Group ID">
+          <button type="button" onClick={() => copyText(sg.id ?? "")} className="inline-flex items-center gap-1 text-primary hover:underline">
+            {sg.id ?? "—"} <Copy className="h-3 w-3" />
+          </button>
+        </KVRow>
+        <KVRow label="VPC">{sg.vpc_id ?? "—"}</KVRow>
+        <KVRow label="Risk"><Badge tone={sg.risk_level === "high" ? "red" : sg.risk_level === "medium" ? "amber" : "green"}>{sg.risk_level ?? "low"}</Badge></KVRow>
+        <KVRow label="Attached">{sg.attached_count ?? 0}</KVRow>
+        <KVRow label="Inbound rules">{sg.ingress_rules ?? 0}</KVRow>
+        <KVRow label="Outbound rules">{sg.egress_rules ?? 0}</KVRow>
+      </div>
+      {(sg.rules ?? []).length > 0 && (
+        <div>
+          <h4 className="mb-2 text-[12px] font-medium uppercase tracking-wider text-muted-foreground">Rules</h4>
+          <div className="max-h-48 space-y-1 overflow-y-auto">
+            {(sg.rules ?? []).map((rule, i) => (
+              <div key={i} className="flex items-start gap-3 rounded-lg bg-secondary/20 px-3 py-2 text-[12px]">
+                <Badge tone={rule.risk === "high" ? "red" : rule.risk === "medium" ? "amber" : "green"} className="shrink-0">{rule.direction}</Badge>
+                <div className="min-w-0 flex-1 text-muted-foreground">
+                  <span className="font-medium text-foreground">{rule.protocol} {rule.ports}</span>
+                  <span className="mx-1 text-muted-foreground/40">→</span>
+                  {rule.targets.map((t) => `${t.type}: ${t.value}`).join(", ") || "—"}
+                  {rule.explanation && <p className="mt-0.5 text-muted-foreground/70">{rule.explanation}</p>}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {sg.console_url && (
+        <a href={sg.console_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 text-[13px] text-primary hover:underline">
+          Open in AWS Console <ArrowUpRight className="h-3 w-3" />
+        </a>
+      )}
+    </div>
+  );
+}
+
+function JobDetail({ job }: { job: ProvisioningJob }) {
+  return (
+    <div className="space-y-4">
+      <div className="divide-y divide-border">
+        <KVRow label="Job ID">
+          <button type="button" onClick={() => copyText(job.id)} className="inline-flex items-center gap-1 text-primary hover:underline">
+            {compact(job.id, 20)} <Copy className="h-3 w-3" />
+          </button>
+        </KVRow>
+        <KVRow label="Lab">{job.template_title}</KVRow>
+        <KVRow label="User">{job.owner_email}</KVRow>
+        <KVRow label="Status"><StatusBadge status={String(job.status)} /></KVRow>
+        <KVRow label="Duration">{job.duration_hours}h</KVRow>
+        <KVRow label="Retries">{job.retries}</KVRow>
+        <KVRow label="Stack">{job.resource_ids.cloudformation_stack ?? "—"}</KVRow>
+        <KVRow label="Cleanup"><Badge tone={statusColor(job.cleanup_status)}>{job.cleanup_status}</Badge></KVRow>
+        <KVRow label="Slow">{job.is_slow ? "Yes" : "No"}</KVRow>
+      </div>
+      {job.error ? (
+        <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-[13px] text-destructive">{job.error}</div>
+      ) : (
+        <div className="rounded-lg border border-border bg-secondary/30 px-4 py-3 text-[13px] text-muted-foreground">{job.current_step}</div>
+      )}
+    </div>
+  );
+}
+
+// ─── Tab definitions ────────────────────────────────────────────────────────
+
+const tabs: { id: AdminTab; label: string; icon: typeof Activity }[] = [
+  { id: "overview", label: "Overview", icon: Activity },
+  { id: "labs", label: "Labs", icon: Server },
+  { id: "users", label: "Users", icon: Users },
+  { id: "infra", label: "Infrastructure", icon: Cloud },
+  { id: "billing", label: "Billing", icon: DollarSign },
+  { id: "jobs", label: "Jobs", icon: Layers },
+  { id: "logs", label: "Logs", icon: FileText },
+  { id: "settings", label: "Settings", icon: Settings },
+];
+
+// ─── Main admin page ────────────────────────────────────────────────────────
 
 export default function AdminPage() {
-  const router = useRouter();
-  const { user, logout } = useAuth();
+  const { user } = useAuth();
   const [overview, setOverview] = useState<AdminOverview | null>(null);
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [labs, setLabs] = useState<AdminLab[]>([]);
@@ -620,38 +572,23 @@ export default function AdminPage() {
   const [aws, setAws] = useState<AwsOverview | null>(null);
   const [logs, setLogs] = useState("");
   const [logService, setLogService] = useState<"api" | "worker">("worker");
-  const [activeSection, setActiveSection] = useState<AdminSection>("overview");
-  const [query, setQuery] = useState<PropertyFilterProps.Query>(defaultQuery);
-  const [pageSize, setPageSize] = useState(10);
+  const [activeTab, setActiveTab] = useState<AdminTab>("overview");
   const [loading, setLoading] = useState(true);
-  const [navigationOpen, setNavigationOpen] = useState(true);
-  const [toolsOpen, setToolsOpen] = useState(false);
-  const [splitPanelOpen, setSplitPanelOpen] = useState(false);
-  const [inspector, setInspector] = useState<InspectorResource | null>(null);
-  const [flashItems, setFlashItems] = useState<FlashbarProps.MessageDefinition[]>([]);
+  const [detail, setDetail] = useState<DetailPanel>(null);
   const [confirmLab, setConfirmLab] = useState<AdminLab | null>(null);
   const [actionId, setActionId] = useState<string | null>(null);
-  const [awsWarning, setAwsWarning] = useState<string | null>(null);
+  const [toasts, setToasts] = useState<Toast[]>([]);
   const [coreError, setCoreError] = useState<string | null>(null);
+  const [awsWarning, setAwsWarning] = useState<string | null>(null);
 
-  const notify = useCallback((type: FlashbarProps.Type, content: string, header?: string) => {
+  const notify = useCallback((type: Toast["type"], title: string, message: string) => {
     const id = `${Date.now()}-${Math.random()}`;
-    setFlashItems((items) => [
-      ...items,
-      {
-        id,
-        type,
-        header,
-        content,
-        dismissible: true,
-        onDismiss: () => setFlashItems((current) => current.filter((item) => item.id !== id)),
-      },
-    ]);
+    setToasts((prev) => [...prev, { id, type, title, message }]);
+    setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), 5000);
   }, []);
 
-  const openInspector = useCallback((resource: InspectorResource) => {
-    setInspector(resource);
-    setSplitPanelOpen(true);
+  const dismissToast = useCallback((id: string) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
   const loadLogs = useCallback(async (service: "api" | "worker") => {
@@ -668,7 +605,7 @@ export default function AdminPage() {
     setCoreError(null);
     setAwsWarning(null);
     try {
-      const [nextOverview, nextUsers, nextLabs, nextEvents, nextCredits, nextJobs, nextAws] = await Promise.allSettled([
+      const [rOverview, rUsers, rLabs, rEvents, rCredits, rJobs, rAws] = await Promise.allSettled([
         getAdminOverview(),
         getAdminUsers(),
         getAdminLabs(),
@@ -677,17 +614,16 @@ export default function AdminPage() {
         getAdminProvisioningJobs(),
         getAdminAwsOverview(),
       ]);
+      if (rOverview.status === "fulfilled") setOverview(rOverview.value);
+      if (rUsers.status === "fulfilled") setUsers(rUsers.value);
+      if (rLabs.status === "fulfilled") setLabs(rLabs.value);
+      if (rEvents.status === "fulfilled") setEvents(rEvents.value);
+      if (rCredits.status === "fulfilled") setCredits(rCredits.value);
+      if (rJobs.status === "fulfilled") setJobs(rJobs.value);
+      if (rAws.status === "fulfilled") setAws(rAws.value);
+      else setAwsWarning(extractApiErrorMessage(rAws.reason));
 
-      if (nextOverview.status === "fulfilled") setOverview(nextOverview.value);
-      if (nextUsers.status === "fulfilled") setUsers(nextUsers.value);
-      if (nextLabs.status === "fulfilled") setLabs(nextLabs.value);
-      if (nextEvents.status === "fulfilled") setEvents(nextEvents.value);
-      if (nextCredits.status === "fulfilled") setCredits(nextCredits.value);
-      if (nextJobs.status === "fulfilled") setJobs(nextJobs.value);
-      if (nextAws.status === "fulfilled") setAws(nextAws.value);
-      else setAwsWarning(extractApiErrorMessage(nextAws.reason));
-
-      const coreFailure = [nextOverview, nextUsers, nextLabs, nextEvents, nextCredits, nextJobs].find((result) => result.status === "rejected");
+      const coreFailure = [rOverview, rUsers, rLabs, rEvents, rCredits, rJobs].find((r) => r.status === "rejected");
       if (coreFailure?.status === "rejected") setCoreError(extractApiErrorMessage(coreFailure.reason));
     } catch (error) {
       setCoreError(extractApiErrorMessage(error));
@@ -701,24 +637,19 @@ export default function AdminPage() {
   }, [loadAdmin]);
 
   useEffect(() => {
-    if (activeSection === "logs") void Promise.resolve().then(() => loadLogs(logService));
-  }, [activeSection, loadLogs, logService]);
-
-  const resetCollectionState = (section: AdminSection) => {
-    setActiveSection(section);
-    setQuery(defaultQuery);
-  };
+    if (activeTab === "logs") void Promise.resolve().then(() => loadLogs(logService));
+  }, [activeTab, loadLogs, logService]);
 
   const stopLab = async () => {
     if (!confirmLab) return;
     setActionId(confirmLab.instance_id);
     try {
       await adminStopLab(confirmLab.instance_id);
-      notify("success", `Teardown queued for ${confirmLab.template_title}`, "Lab stop requested");
+      notify("success", "Lab stop requested", `Teardown queued for ${confirmLab.template_title}`);
       setConfirmLab(null);
       await loadAdmin();
     } catch (error) {
-      notify("error", extractApiErrorMessage(error), "Could not stop lab");
+      notify("error", "Could not stop lab", extractApiErrorMessage(error));
     } finally {
       setActionId(null);
     }
@@ -728,10 +659,10 @@ export default function AdminPage() {
     setActionId(lab.instance_id);
     try {
       await adminExtendLabTtl(lab.instance_id, hours);
-      notify("success", `${lab.template_title} extended by ${hours}h`, "TTL extended");
+      notify("success", "TTL extended", `${lab.template_title} extended by ${hours}h`);
       await loadAdmin();
     } catch (error) {
-      notify("error", extractApiErrorMessage(error), "TTL extension failed");
+      notify("error", "TTL extension failed", extractApiErrorMessage(error));
     } finally {
       setActionId(null);
     }
@@ -741,770 +672,730 @@ export default function AdminPage() {
     setActionId(row.id);
     try {
       await adjustAdminUserCredits(row.id, 5, "Operator credit grant");
-      notify("success", `Added 5 credits to ${row.email}`, "Credits updated");
+      notify("success", "Credits updated", `Added 5 credits to ${row.email}`);
       await loadAdmin();
     } catch (error) {
-      notify("error", extractApiErrorMessage(error), "Credit adjustment failed");
+      notify("error", "Credit adjustment failed", extractApiErrorMessage(error));
     } finally {
       setActionId(null);
     }
   };
 
-  const commonActions = (
-    <SpaceBetween direction="horizontal" size="xs">
-      <Button iconName="refresh" loading={loading} onClick={loadAdmin}>Refresh</Button>
-    </SpaceBetween>
-  );
+  // ── Derived data ──
 
   const instances = aws?.ec2.lab_instances ?? [];
-  const ecrImages = [aws?.ecr.api, aws?.ecr.worker].filter((item): item is NonNullable<typeof item> => Boolean(item));
-  const instanceFields = useMemo(() => ({
-    state: (item: AwsInstance) => item.state,
-    type: (item: AwsInstance) => item.type,
-    az: (item: AwsInstance) => item.az,
-    owner: (item: AwsInstance) => labs.find((lab) => lab.instance_id === item.lab_instance_id || lab.ec2_public_ip === item.public_ip)?.owner_email,
-    lab: (item: AwsInstance) => item.lab_instance_id,
-  }), [labs]);
-  const instanceCollection = usePagedItems(
-    instances,
-    pageSize,
-    query,
-    (item) => [item.id, item.name, item.public_ip, item.private_ip, item.lab_instance_id, item.stack_name, item.az, item.state].join(" "),
-    instanceFields
-  );
-
   const securityGroups = aws?.network.security_groups ?? [];
-  const securityCollection = usePagedItems(
-    securityGroups,
-    pageSize,
-    query,
-    (item) => [item.id, item.name, item.description, item.vpc_id, item.risk_level].join(" "),
-    {
-      risk: (item) => item.risk_level,
-      vpc: (item) => item.vpc_id,
-      name: (item) => item.name,
-      attached: (item) => item.attached_count,
-    }
-  );
+  const highRiskGroups = securityGroups.filter((g) => g.risk_level === "high").length;
+  const runningInstances = instances.filter((i) => i.state === "running").length;
+  const slowJobs = jobs.filter((j) => j.is_slow).length;
+  const activeUsers = users.filter((u) => (u.active_labs ?? 0) > 0).length;
 
-  const labsCollection = usePagedItems(
-    labs,
-    pageSize,
-    query,
-    (item) => [item.instance_id, item.template_title, item.owner_email, item.status, item.ec2_public_ip, item.cfn_stack_name].join(" "),
-    {
-      status: (item) => String(item.status),
-      owner: (item) => item.owner_email,
-      template: (item) => item.template_title,
-    }
-  );
-
-  const usersCollection = usePagedItems(
-    users,
-    pageSize,
-    query,
-    (item) => [item.id, item.email, item.role, item.subscription_tier].join(" "),
-    {
-      role: (item) => item.role,
-      status: (item) => (item.is_disabled ? "disabled" : "active"),
-      email: (item) => item.email,
-    }
-  );
-
-  const jobsCollection = usePagedItems(
-    jobs,
-    pageSize,
-    query,
-    (item) => [item.id, item.template_title, item.owner_email, item.status, item.current_step, item.error, item.cleanup_status].join(" "),
-    {
-      status: (item) => String(item.status),
-      cleanup: (item) => item.cleanup_status,
-      slow: (item) => (item.is_slow ? "yes" : "no"),
-      owner: (item) => item.owner_email,
-    }
-  );
-
-  const creditCollection = usePagedItems(
-    credits,
-    pageSize,
-    query,
-    (item) => [item.user_id, item.reason, item.delta, item.created_at].join(" "),
-    {
-      user: (item) => item.user_id,
-      reason: (item) => item.reason,
-    }
-  );
-
-  const computeColumns: TableProps.ColumnDefinition<AwsInstance>[] = [
-    {
-      id: "name",
-      header: "Name",
-      cell: (item) => (
-        <Link onFollow={(event) => { event.preventDefault(); openInspector({ type: "EC2 instance", title: item.name ?? item.id ?? "Instance", subtitle: item.id ?? "-", item }); }}>
-          {item.name ?? item.id}
-        </Link>
-      ),
-      sortingField: "name",
-    },
-    { id: "id", header: "Instance ID", cell: (item) => <CopyToClipboard copyButtonText="Copy" copyErrorText="Copy failed" copySuccessText="Copied" textToCopy={item.id ?? ""} /> },
-    { id: "state", header: "State", cell: (item) => <Status value={item.state} />, sortingField: "state" },
-    { id: "type", header: "Type", cell: (item) => item.type ?? "-" },
-    { id: "az", header: "Region/AZ", cell: (item) => item.az ?? aws?.region ?? "-" },
-    { id: "public", header: "Public IP", cell: (item) => item.public_ip ?? "-" },
-    { id: "private", header: "Private IP", cell: (item) => item.private_ip ?? "-" },
-    { id: "lab", header: "Linked lab", cell: (item) => compact(item.lab_instance_id) },
-    { id: "owner", header: "Owner/user", cell: (item) => labs.find((lab) => lab.instance_id === item.lab_instance_id || lab.ec2_public_ip === item.public_ip)?.owner_email ?? "-" },
-    { id: "uptime", header: "Uptime", cell: (item) => `${item.uptime_hours ?? 0}h` },
-    { id: "cost", header: "Estimated cost", cell: (item) => money(item.estimated_running_cost) },
-    {
-      id: "actions",
-      header: "Actions",
-      cell: (item) => (
-        <ButtonDropdown
-          variant="inline-icon"
-          ariaLabel="Instance actions"
-          items={[
-            { id: "view", text: "View details" },
-            { id: "aws", text: "Open in AWS Console", disabled: !item.console_url },
-            { id: "stop", text: "Stop", disabled: true, disabledReason: "TODO: backend EC2 stop action is not implemented" },
-            { id: "reboot", text: "Reboot", disabled: true, disabledReason: "TODO: backend EC2 reboot action is not implemented" },
-            { id: "terminate", text: "Force terminate", disabled: true, disabledReason: "TODO: guarded terminate endpoint required" },
-          ]}
-          onItemClick={({ detail }) => {
-            if (detail.id === "view") openInspector({ type: "EC2 instance", title: item.name ?? item.id ?? "Instance", subtitle: item.id ?? "-", item });
-            if (detail.id === "aws" && item.console_url) window.open(item.console_url, "_blank", "noreferrer");
-          }}
-        />
-      ),
-    },
-  ];
-
-  const securityColumns: TableProps.ColumnDefinition<AwsSecurityGroup>[] = [
-    {
-      id: "name",
-      header: "Security group",
-      cell: (item) => (
-        <Link onFollow={(event) => { event.preventDefault(); openInspector({ type: "Security group", title: item.name ?? item.id ?? "Security group", subtitle: item.id ?? "-", item }); }}>
-          {item.name ?? item.id}
-        </Link>
-      ),
-    },
-    { id: "id", header: "ID", cell: (item) => <CopyToClipboard copyButtonText="Copy" copyErrorText="Copy failed" copySuccessText="Copied" textToCopy={item.id ?? ""} /> },
-    { id: "vpc", header: "VPC", cell: (item) => item.vpc_id ?? "-" },
-    { id: "attached", header: "Attached resources", cell: (item) => String(item.attached_count ?? 0) },
-    { id: "inbound", header: "Inbound", cell: (item) => String(item.ingress_rules ?? 0) },
-    { id: "outbound", header: "Outbound", cell: (item) => String(item.egress_rules ?? 0) },
-    { id: "risk", header: "Risk level", cell: (item) => <RiskBadge value={item.risk_level} /> },
-    { id: "summary", header: "Risk summary", cell: (item) => (item.rules ?? []).filter((rule) => rule.risk !== "low").slice(0, 2).map((rule) => rule.explanation).join(" ") || "No obvious exposure." },
-    {
-      id: "actions",
-      header: "Actions",
-      cell: (item) => (
-        <ButtonDropdown
-          variant="inline-icon"
-          ariaLabel="Security group actions"
-          items={[
-            { id: "view", text: "View details" },
-            { id: "aws", text: "Open in AWS Console", disabled: !item.console_url },
-            { id: "remediate", text: "Remediate rule", disabled: true, disabledReason: "TODO: guarded rule revoke endpoint required" },
-          ]}
-          onItemClick={({ detail }) => {
-            if (detail.id === "view") openInspector({ type: "Security group", title: item.name ?? item.id ?? "Security group", subtitle: item.id ?? "-", item });
-            if (detail.id === "aws" && item.console_url) window.open(item.console_url, "_blank", "noreferrer");
-          }}
-        />
-      ),
-    },
-  ];
-
-  const labColumns: TableProps.ColumnDefinition<AdminLab>[] = [
-    {
-      id: "lab",
-      header: "Lab name / ID",
-      cell: (item) => (
-        <Link onFollow={(event) => { event.preventDefault(); openInspector({ type: "Lab", title: item.template_title, subtitle: item.instance_id, item }); }}>
-          {item.template_title}
-        </Link>
-      ),
-    },
-    { id: "owner", header: "Owner", cell: (item) => item.owner_email },
-    { id: "status", header: "Status", cell: (item) => <Status value={String(item.status)} /> },
-    { id: "created", header: "Created", cell: (item) => fmt(item.started_at) },
-    { id: "uptime", header: "Uptime", cell: (item) => `${item.runtime_hours ?? 0}h` },
-    { id: "ttl", header: "TTL / expiration", cell: (item) => fmt(item.expires_at) },
-    { id: "ip", header: "Public URL/IP", cell: (item) => item.ec2_public_ip ?? "-" },
-    { id: "resources", header: "Resources", cell: (item) => item.cfn_stack_name ?? "-" },
-    { id: "credits", header: "Credits", cell: (item) => String(item.credits_cost ?? 0) },
-    { id: "cost", header: "Estimated AWS cost", cell: (item) => money(item.estimated_aws_cost) },
-    { id: "health", header: "Health", cell: (item) => item.cleanup_required ? <StatusIndicator type="warning">cleanup required</StatusIndicator> : <StatusIndicator type="success">tracked</StatusIndicator> },
-    {
-      id: "actions",
-      header: "Actions",
-      cell: (item) => (
-        <ButtonDropdown
-          variant="inline-icon"
-          ariaLabel="Lab actions"
-          items={[
-            { id: "view", text: "View details" },
-            { id: "extend", text: "Extend TTL by 2h" },
-            { id: "stop", text: "Force stop" },
-            { id: "delete", text: "Force delete", disabled: true, disabledReason: "TODO: hard-delete endpoint required" },
-            { id: "restart", text: "Restart", disabled: true, disabledReason: "TODO: restart flow required" },
-            { id: "logs", text: "Inspect logs" },
-            { id: "cleanup", text: "Cleanup resources", disabled: true, disabledReason: "TODO: orphan cleanup endpoint required" },
-          ]}
-          onItemClick={({ detail }) => {
-            if (detail.id === "view") openInspector({ type: "Lab", title: item.template_title, subtitle: item.instance_id, item });
-            if (detail.id === "extend") void extendLab(item, 2);
-            if (detail.id === "stop") setConfirmLab(item);
-            if (detail.id === "logs") resetCollectionState("logs");
-          }}
-        />
-      ),
-    },
-  ];
-
-  const userColumns: TableProps.ColumnDefinition<AdminUser>[] = [
-    { id: "email", header: "Name/email", cell: (item) => <Link onFollow={(event) => { event.preventDefault(); openInspector({ type: "User", title: item.email, subtitle: item.id, item }); }}>{item.email}</Link> },
-    { id: "role", header: "Role", cell: (item) => <Badge>{item.role}</Badge> },
-    { id: "status", header: "Status", cell: (item) => <Status value={item.is_disabled ? "disabled" : "active"} /> },
-    { id: "credits", header: "Credits", cell: (item) => String(item.credits_balance) },
-    { id: "active", header: "Active labs", cell: (item) => String(item.active_labs ?? 0) },
-    { id: "total", header: "Total labs launched", cell: (item) => String(item.total_labs ?? 0) },
-    { id: "spend", header: "Total estimated spend", cell: (item) => money(labs.filter((lab) => lab.owner_id === item.id).reduce((sum, lab) => sum + (lab.estimated_aws_cost ?? 0), 0)) },
-    { id: "activity", header: "Last activity", cell: (item) => fmt(labs.filter((lab) => lab.owner_id === item.id)[0]?.started_at ?? item.created_at) },
-    {
-      id: "actions",
-      header: "Actions",
-      cell: (item) => (
-        <ButtonDropdown
-          variant="inline-icon"
-          items={[
-            { id: "view", text: "View details" },
-            { id: "credit", text: "Add 5 credits" },
-            { id: "disable", text: "Disable user", disabled: true, disabledReason: "TODO: user status API is available but UI confirmation is not wired yet" },
-          ]}
-          onItemClick={({ detail }) => {
-            if (detail.id === "view") openInspector({ type: "User", title: item.email, subtitle: item.id, item });
-            if (detail.id === "credit") void addCredit(item);
-          }}
-        />
-      ),
-    },
-  ];
-
-  const jobColumns: TableProps.ColumnDefinition<ProvisioningJob>[] = [
-    { id: "id", header: "Job ID", cell: (item) => <Link onFollow={(event) => { event.preventDefault(); openInspector({ type: "Provisioning job", title: item.template_title, subtitle: item.id, item }); }}>{compact(item.id)}</Link> },
-    { id: "lab", header: "Lab", cell: (item) => item.template_title },
-    { id: "user", header: "User", cell: (item) => item.owner_email },
-    { id: "status", header: "Status", cell: (item) => <Status value={String(item.status)} /> },
-    { id: "step", header: "Current step", cell: (item) => item.current_step },
-    { id: "duration", header: "Duration", cell: (item) => `${item.duration_hours}h` },
-    { id: "started", header: "Started", cell: (item) => fmt(item.started_at) },
-    { id: "finished", header: "Finished", cell: (item) => fmt(item.finished_at) },
-    { id: "retries", header: "Retries", cell: (item) => String(item.retries) },
-    { id: "resources", header: "Created resources", cell: (item) => item.resource_ids.cloudformation_stack ?? item.resource_ids.public_ip ?? "-" },
-    { id: "error", header: "Error summary", cell: (item) => item.error ?? "-" },
-    { id: "cleanup", header: "Cleanup", cell: (item) => <Status value={item.cleanup_status} /> },
-  ];
-
-  const navigation = (
-    <SideNavigation
-      activeHref={`#${activeSection}`}
-      header={{ href: "#overview", text: "Orchestrryx Admin" }}
-      onFollow={(event) => {
-        event.preventDefault();
-        const next = event.detail.href.replace("#", "") as AdminSection;
-        resetCollectionState(next);
-      }}
-      items={[
-        { type: "link", text: "Overview", href: "#overview" },
-        { type: "section", text: "Cloud resources", items: [
-          { type: "link", text: "Compute", href: "#compute" },
-          { type: "link", text: "Networking", href: "#networking" },
-          { type: "link", text: "Security Groups", href: "#security" },
-          { type: "link", text: "Storage", href: "#storage" },
-        ] },
-        { type: "section", text: "Platform", items: [
-          { type: "link", text: "Labs", href: "#labs" },
-          { type: "link", text: "Users", href: "#users" },
-          { type: "link", text: "Credits / Billing", href: "#billing" },
-          { type: "link", text: "Provisioning Jobs", href: "#jobs" },
-          { type: "link", text: "Logs / Debug", href: "#logs" },
-          { type: "link", text: "Settings", href: "#settings" },
-        ] },
-      ]}
-    />
-  );
-
-  const breadcrumbs = (
-    <BreadcrumbGroup
-      items={[
-        { text: "Orchestrryx Admin", href: "#overview" },
-        { text: sectionLabels[activeSection], href: `#${activeSection}` },
-      ]}
-      onFollow={(event) => event.preventDefault()}
-    />
-  );
-
-  const content = (
-    <ContentLayout
-      header={
-        <Header
-          variant="h1"
-          description="Cloud operations console for AWS resources, labs, provisioning, users, credits, and debugging."
-          actions={commonActions}
-        >
-          {sectionLabels[activeSection]}
-        </Header>
-      }
-    >
-      <SpaceBetween size="l">
-        <Flashbar items={flashItems} />
-        {coreError ? <Alert type="error" header="Admin API error">{coreError}</Alert> : null}
-        {awsWarning ? <Alert type="warning" header="AWS telemetry warning">{awsWarning}</Alert> : null}
-
-        {activeSection === "overview" ? (
-          <SpaceBetween size="l">
-            <MetricCards overview={overview} aws={aws} jobs={jobs} users={users} />
-            <ColumnLayout columns={2}>
-              <Container header={<Header variant="h2">Operator findings</Header>}>
-                <SpaceBetween size="s">
-                  {(aws?.network.security_groups.filter((group) => group.risk_level === "high").length ?? 0) > 0 ? (
-                    <Alert type="error">High-risk security groups expose public or broad access. Open Security Groups to inspect rules.</Alert>
-                  ) : <Alert type="success">No high-risk security group rules detected in the current AWS snapshot.</Alert>}
-                  {jobs.some((job) => job.is_slow) ? <Alert type="warning">Slow provisioning jobs are present. Open Provisioning Jobs for step and cleanup detail.</Alert> : null}
-                  {labs.some((lab) => lab.cleanup_required) ? <Alert type="warning">Some labs need cleanup verification to prevent orphaned spend.</Alert> : null}
-                </SpaceBetween>
-              </Container>
-              <Cards
-                cardDefinition={{
-                  header: (item) => item.title,
-                  sections: [{ id: "detail", content: (item) => item.detail }],
-                }}
-                cardsPerRow={[{ cards: 1 }, { minWidth: 500, cards: 2 }]}
-                items={[
-                  { title: "Active labs", detail: `${overview?.labs.active ?? 0} active, ${overview?.labs.failed ?? 0} failed` },
-                  { title: "Running compute", detail: `${instances.filter((instance) => instance.state === "running").length} running EC2 lab hosts` },
-                  { title: "Estimated spend", detail: `${money(aws?.costs.total)} for ${aws?.costs.period ?? "current period"}` },
-                  { title: "Users with active labs", detail: `${users.filter((item) => (item.active_labs ?? 0) > 0).length} users currently consuming lab capacity` },
-                ]}
-              />
-            </ColumnLayout>
-          </SpaceBetween>
-        ) : null}
-
-        {activeSection === "compute" ? (
-          <ResourceTable
-            title="EC2 compute resources"
-            description="Tagged Orchestrryx lab hosts with ownership, networking, cost, and AWS console links."
-            items={instanceCollection.visible}
-            filteredCount={instanceCollection.filtered.length}
-            page={instanceCollection.page}
-            pageCount={instanceCollection.pageCount}
-            setPage={instanceCollection.setCurrentPageIndex}
-            pageSize={pageSize}
-            setPageSize={setPageSize}
-            loading={loading}
-            columnDefinitions={computeColumns}
-            trackBy={(item) => item.id ?? item.name ?? "instance"}
-            filter={
-              <ResourceFilter
-                query={query}
-                onChange={setQuery}
-                count={instanceCollection.filtered.length}
-                properties={[
-                  { key: "state", propertyLabel: "State", groupValuesLabel: "State values", operators: [":", "!="] },
-                  { key: "type", propertyLabel: "Type", groupValuesLabel: "Type values", operators: [":", "!="] },
-                  { key: "az", propertyLabel: "AZ", groupValuesLabel: "AZ values", operators: [":", "!="] },
-                  { key: "owner", propertyLabel: "Owner", groupValuesLabel: "Owner values", operators: [":", "!="] },
-                  { key: "lab", propertyLabel: "Lab", groupValuesLabel: "Lab values", operators: [":", "!="] },
-                ]}
-              />
-            }
-            empty={<EmptyState title="No compute resources" detail="No tagged Orchestrryx EC2 instances were returned." />}
-          />
-        ) : null}
-
-        {activeSection === "security" ? (
-          <ResourceTable
-            title="Security group debugger"
-            description="Rule-level ingress and egress debugger with risk classification and attachments."
-            items={securityCollection.visible}
-            filteredCount={securityCollection.filtered.length}
-            page={securityCollection.page}
-            pageCount={securityCollection.pageCount}
-            setPage={securityCollection.setCurrentPageIndex}
-            pageSize={pageSize}
-            setPageSize={setPageSize}
-            loading={loading}
-            columnDefinitions={securityColumns}
-            trackBy={(item) => item.id ?? item.name ?? "security-group"}
-            filter={
-              <ResourceFilter
-                query={query}
-                onChange={setQuery}
-                count={securityCollection.filtered.length}
-                properties={[
-                  { key: "risk", propertyLabel: "Risk", groupValuesLabel: "Risk values", operators: [":", "!="] },
-                  { key: "vpc", propertyLabel: "VPC", groupValuesLabel: "VPC values", operators: [":", "!="] },
-                  { key: "name", propertyLabel: "Name", groupValuesLabel: "Name values", operators: [":", "!="] },
-                  { key: "attached", propertyLabel: "Attached count", groupValuesLabel: "Attached values", operators: [":", "!="] },
-                ]}
-              />
-            }
-            empty={<EmptyState title="No security groups" detail="No relevant Orchestrryx security groups were returned. Check AWS_VPC_ID and EC2 permissions." />}
-          />
-        ) : null}
-
-        {activeSection === "networking" ? (
-          <SpaceBetween size="l">
-            <ColumnLayout columns={3}>
-              {(aws?.network.vpcs ?? []).map((vpc) => (
-                <Container key={vpc.id} header={<Header variant="h3">{vpc.id}</Header>}>
-                  <KeyValuePairs items={[
-                    { label: "CIDR", value: vpc.cidr ?? "-" },
-                    { label: "State", value: <Status value={vpc.state} /> },
-                    { label: "Default", value: vpc.is_default ? "yes" : "no" },
-                    { label: "AWS Console", value: <ConsoleLink href={vpc.console_url} label="Open VPC" /> },
-                  ]} />
-                </Container>
-              ))}
-            </ColumnLayout>
-            <Table
-              trackBy={(item) => item.id ?? "subnet"}
-              header={<Header variant="h2">Subnets</Header>}
-              items={aws?.network.subnets ?? []}
-              columnDefinitions={[
-                { id: "id", header: "Subnet ID", cell: (item) => <ConsoleLink href={item.console_url} label={item.id ?? "Subnet"} /> },
-                { id: "vpc", header: "VPC", cell: (item) => item.vpc_id },
-                { id: "az", header: "AZ", cell: (item) => item.az },
-                { id: "cidr", header: "CIDR", cell: (item) => item.cidr },
-                { id: "ips", header: "Available IPs", cell: (item) => item.available_ips },
-                { id: "public", header: "Public IP on launch", cell: (item) => item.public_ip_on_launch ? "yes" : "no" },
-              ]}
-              empty={<EmptyState title="No subnets" detail="No VPC subnets were returned." />}
-            />
-            <ColumnLayout columns={2}>
-              <Table
-                trackBy={(item) => item.arn ?? item.name ?? "lb"}
-                header={<Header variant="h2">Load balancers</Header>}
-                items={aws?.load_balancing.load_balancers ?? []}
-                columnDefinitions={[
-                  { id: "name", header: "Name", cell: (item) => <Link onFollow={(event) => { event.preventDefault(); openInspector({ type: "Load balancer", title: item.name ?? "Load balancer", subtitle: item.arn ?? "-", item }); }}>{item.name}</Link> },
-                  { id: "state", header: "State", cell: (item) => <Status value={item.state} /> },
-                  { id: "scheme", header: "Scheme", cell: (item) => item.scheme },
-                  { id: "console", header: "AWS Console", cell: (item) => <ConsoleLink href={item.console_url} label="Open" /> },
-                ]}
-              />
-              <Table
-                trackBy={(item) => item.arn ?? item.name ?? "tg"}
-                header={<Header variant="h2">Target groups</Header>}
-                items={aws?.load_balancing.target_groups ?? []}
-                columnDefinitions={[
-                  { id: "name", header: "Name", cell: (item) => <Link onFollow={(event) => { event.preventDefault(); openInspector({ type: "Target group", title: item.name ?? "Target group", subtitle: item.arn ?? "-", item }); }}>{item.name}</Link> },
-                  { id: "port", header: "Protocol / port", cell: (item) => `${item.protocol}:${item.port}` },
-                  { id: "type", header: "Target type", cell: (item) => item.target_type },
-                  { id: "console", header: "AWS Console", cell: (item) => <ConsoleLink href={item.console_url} label="Open" /> },
-                ]}
-              />
-            </ColumnLayout>
-          </SpaceBetween>
-        ) : null}
-
-        {activeSection === "storage" ? (
-          <SpaceBetween size="l">
-            <Table
-              trackBy={(item) => item.repository}
-              header={<Header variant="h2">ECR images</Header>}
-              items={ecrImages}
-              columnDefinitions={[
-                { id: "repository", header: "Repository", cell: (item) => <ConsoleLink href={item?.console_url} label={item?.repository ?? "Repository"} /> },
-                { id: "status", header: "Status", cell: (item) => <Status value={item?.status} /> },
-                { id: "pushed", header: "Pushed", cell: (item) => fmt(item?.pushed_at) },
-                { id: "size", header: "Size", cell: (item) => `${item?.size_mb ?? 0} MB` },
-                { id: "tags", header: "Tags", cell: (item) => item?.tags?.join(", ") ?? "-" },
-              ]}
-            />
-            <Table
-              trackBy={(item) => item.name ?? "secret"}
-              header={<Header variant="h2">Secrets Manager</Header>}
-              items={aws?.secrets.items ?? []}
-              columnDefinitions={[
-                { id: "name", header: "Name", cell: (item) => <ConsoleLink href={item.console_url} label={item.name ?? "Secret"} /> },
-                { id: "changed", header: "Last changed", cell: (item) => fmt(item.last_changed_at) },
-                { id: "accessed", header: "Last accessed", cell: (item) => fmt(item.last_accessed_at) },
-                { id: "rotation", header: "Rotation", cell: (item) => item.rotation_enabled ? <StatusIndicator type="success">enabled</StatusIndicator> : <StatusIndicator type="warning">disabled</StatusIndicator> },
-              ]}
-            />
-          </SpaceBetween>
-        ) : null}
-
-        {activeSection === "labs" ? (
-          <ResourceTable
-            title="Labs"
-            description="Lab sessions with owner, lifecycle, TTL, cost, health, and admin intervention actions."
-            items={labsCollection.visible}
-            filteredCount={labsCollection.filtered.length}
-            page={labsCollection.page}
-            pageCount={labsCollection.pageCount}
-            setPage={labsCollection.setCurrentPageIndex}
-            pageSize={pageSize}
-            setPageSize={setPageSize}
-            loading={loading}
-            columnDefinitions={labColumns}
-            trackBy="instance_id"
-            filter={<ResourceFilter query={query} onChange={setQuery} count={labsCollection.filtered.length} properties={[
-              { key: "status", propertyLabel: "Status", groupValuesLabel: "Status values", operators: [":", "!="] },
-              { key: "owner", propertyLabel: "Owner", groupValuesLabel: "Owner values", operators: [":", "!="] },
-              { key: "template", propertyLabel: "Template", groupValuesLabel: "Template values", operators: [":", "!="] },
-            ]} />}
-            empty={<EmptyState title="No labs" detail="No lab sessions matched the current filter." />}
-          />
-        ) : null}
-
-        {activeSection === "users" ? (
-          <ResourceTable
-            title="Users"
-            description="Users, roles, credits, active labs, launch history, and usage cost."
-            items={usersCollection.visible}
-            filteredCount={usersCollection.filtered.length}
-            page={usersCollection.page}
-            pageCount={usersCollection.pageCount}
-            setPage={usersCollection.setCurrentPageIndex}
-            pageSize={pageSize}
-            setPageSize={setPageSize}
-            loading={loading}
-            columnDefinitions={userColumns}
-            trackBy="id"
-            filter={<ResourceFilter query={query} onChange={setQuery} count={usersCollection.filtered.length} properties={[
-              { key: "role", propertyLabel: "Role", groupValuesLabel: "Role values", operators: [":", "!="] },
-              { key: "status", propertyLabel: "Status", groupValuesLabel: "Status values", operators: [":", "!="] },
-              { key: "email", propertyLabel: "Email", groupValuesLabel: "Email values", operators: [":", "!="] },
-            ]} />}
-            empty={<EmptyState title="No users" detail="No users matched the current filter." />}
-          />
-        ) : null}
-
-        {activeSection === "billing" ? (
-          <SpaceBetween size="l">
-            <ColumnLayout columns={3}>
-              <Container header={<Header variant="h3">Cost Explorer</Header>}>{money(aws?.costs.total)} · {aws?.costs.period ?? "unavailable"}</Container>
-              <Container header={<Header variant="h3">Running EC2 estimate</Header>}>{money(instances.reduce((sum, item) => sum + (item.estimated_running_cost ?? 0), 0))}</Container>
-              <Container header={<Header variant="h3">Outstanding credits</Header>}>{overview?.credits.outstanding_balance.toFixed(1) ?? "0"}</Container>
-            </ColumnLayout>
-            <ColumnLayout columns={2}>
-              <Table
-                trackBy="service"
-                header={<Header variant="h2">Spend per AWS service</Header>}
-                items={aws?.costs.services ?? []}
-                columnDefinitions={[
-                  { id: "service", header: "Service", cell: (item) => item.service },
-                  { id: "amount", header: "Amount", cell: (item) => money(item.amount) },
-                ]}
-              />
-              <Table
-                trackBy="instance_id"
-                header={<Header variant="h2">Spend per lab</Header>}
-                items={labs}
-                columnDefinitions={[
-                  { id: "lab", header: "Lab", cell: (item) => item.template_title },
-                  { id: "owner", header: "Owner", cell: (item) => item.owner_email },
-                  { id: "cost", header: "Estimated cost", cell: (item) => money(item.estimated_aws_cost) },
-                ]}
-              />
-            </ColumnLayout>
-            <ResourceTable
-              title="Credit transactions"
-              description="Append-only credit ledger."
-              items={creditCollection.visible}
-              filteredCount={creditCollection.filtered.length}
-              page={creditCollection.page}
-              pageCount={creditCollection.pageCount}
-              setPage={creditCollection.setCurrentPageIndex}
-              pageSize={pageSize}
-              setPageSize={setPageSize}
-              loading={loading}
-              columnDefinitions={[
-                { id: "delta", header: "Delta", cell: (item) => item.delta >= 0 ? `+${item.delta}` : item.delta },
-                { id: "user", header: "User ID", cell: (item) => compact(item.user_id) },
-                { id: "reason", header: "Reason", cell: (item) => item.reason },
-                { id: "created", header: "Created", cell: (item) => fmt(item.created_at) },
-              ]}
-              trackBy="id"
-              filter={<ResourceFilter query={query} onChange={setQuery} count={creditCollection.filtered.length} properties={[
-                { key: "user", propertyLabel: "User", groupValuesLabel: "User values", operators: [":", "!="] },
-                { key: "reason", propertyLabel: "Reason", groupValuesLabel: "Reason values", operators: [":", "!="] },
-              ]} />}
-              empty={<EmptyState title="No credit transactions" detail="No credit ledger entries matched the current filter." />}
-            />
-          </SpaceBetween>
-        ) : null}
-
-        {activeSection === "jobs" ? (
-          <ResourceTable
-            title="Provisioning jobs"
-            description="Lifecycle jobs with current step, duration, resources, retries, errors, and cleanup status."
-            items={jobsCollection.visible}
-            filteredCount={jobsCollection.filtered.length}
-            page={jobsCollection.page}
-            pageCount={jobsCollection.pageCount}
-            setPage={jobsCollection.setCurrentPageIndex}
-            pageSize={pageSize}
-            setPageSize={setPageSize}
-            loading={loading}
-            columnDefinitions={jobColumns}
-            trackBy="id"
-            filter={<ResourceFilter query={query} onChange={setQuery} count={jobsCollection.filtered.length} properties={[
-              { key: "status", propertyLabel: "Status", groupValuesLabel: "Status values", operators: [":", "!="] },
-              { key: "cleanup", propertyLabel: "Cleanup", groupValuesLabel: "Cleanup values", operators: [":", "!="] },
-              { key: "slow", propertyLabel: "Slow", groupValuesLabel: "Slow values", operators: [":", "!="] },
-              { key: "owner", propertyLabel: "Owner", groupValuesLabel: "Owner values", operators: [":", "!="] },
-            ]} />}
-            empty={<EmptyState title="No jobs" detail="No provisioning jobs matched the current filter." />}
-          />
-        ) : null}
-
-        {activeSection === "logs" ? (
-          <SpaceBetween size="m">
-            <Container
-              header={
-                <Header
-                  variant="h2"
-                  actions={
-                    <SpaceBetween direction="horizontal" size="xs">
-                      <Select
-                        selectedOption={{ label: logService, value: logService }}
-                        onChange={({ detail }) => loadLogs((detail.selectedOption.value as "api" | "worker") ?? "worker")}
-                        options={[{ label: "api", value: "api" }, { label: "worker", value: "worker" }]}
-                      />
-                      <CopyToClipboard copyButtonText="Copy log tail" copyErrorText="Copy failed" copySuccessText="Copied" textToCopy={logs} />
-                      <ConsoleLink href={logService === "api" ? aws?.logs.api.console_url : aws?.logs.worker.console_url} label="Open CloudWatch" />
-                    </SpaceBetween>
-                  }
-                >
-                  CloudWatch log tail
-                </Header>
-              }
-            >
-              <FormField label="Readable log output" description="Filter-by-lab/user/resource is TODO until the backend exposes structured log search.">
-                <Textarea value={logs || "Select a service to load logs."} readOnly rows={24} />
-              </FormField>
-            </Container>
-          </SpaceBetween>
-        ) : null}
-
-        {activeSection === "settings" ? (
-          <ColumnLayout columns={2}>
-            <Container header={<Header variant="h2">Telemetry inputs</Header>}>
-              <KeyValuePairs items={[
-                { label: "Environment", value: process.env.NODE_ENV ?? "development" },
-                { label: "API URL", value: process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000" },
-                { label: "AWS region", value: aws?.region ?? "unavailable" },
-                { label: "ECS cluster", value: aws?.cluster ?? "unavailable" },
-                { label: "API log group", value: aws?.logs.api.name ?? "unavailable" },
-                { label: "Worker log group", value: aws?.logs.worker.name ?? "unavailable" },
-              ]} />
-            </Container>
-            <Container header={<Header variant="h2">Implemented actions</Header>}>
-              <SpaceBetween size="s">
-                <StatusIndicator type="success">Lab stop queues real backend teardown.</StatusIndicator>
-                <StatusIndicator type="success">TTL extension writes real lab event/state.</StatusIndicator>
-                <StatusIndicator type="success">Credit grants write the credit ledger.</StatusIndicator>
-                <StatusIndicator type="warning">EC2 reboot/terminate and SG remediation are TODO pending guarded backend endpoints.</StatusIndicator>
-              </SpaceBetween>
-            </Container>
-          </ColumnLayout>
-        ) : null}
-      </SpaceBetween>
-    </ContentLayout>
-  );
+  // ── Access guard ──
 
   if (user?.role !== "admin") {
     return (
-      <Box padding="xxl">
-        <Alert type="error" header="Admin access required">
-          Your account is authenticated but is not marked as an Orchestrryx administrator.
-        </Alert>
-      </Box>
+      <div className="flex min-h-[60vh] items-center justify-center">
+        <div className="app-card max-w-sm p-8 text-center">
+          <Shield className="mx-auto h-10 w-10 text-destructive/60" />
+          <h2 className="mt-4 text-lg font-semibold text-foreground">Admin access required</h2>
+          <p className="mt-2 text-[13px] text-muted-foreground">Your account is not marked as an Orchestryx administrator.</p>
+        </div>
+      </div>
     );
   }
 
   return (
-    <>
-      <TopNavigation
-        identity={{ href: "/admin", title: "Orchestrryx Admin" }}
-        utilities={[
-          { type: "button", text: process.env.NODE_ENV ?? "development", iconName: "settings" },
-          {
-            type: "menu-dropdown",
-            text: user?.email ?? "Admin",
-            description: user?.role ?? "admin",
-            iconName: "user-profile",
-            items: [
-              { id: "account", text: "Account" },
-              { id: "logout", text: "Logout" },
-            ],
-            onItemClick: ({ detail }) => {
-              if (detail.id === "logout") {
-                logout();
-                router.replace("/login");
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight text-foreground">Admin Console</h1>
+          <p className="mt-1 text-[13px] text-muted-foreground">
+            Cloud operations, labs, users, billing, and infrastructure.
+          </p>
+        </div>
+        <Button variant="secondary" size="sm" onClick={loadAdmin} disabled={loading}>
+          {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+          Refresh
+        </Button>
+      </div>
+
+      {/* Errors */}
+      {coreError && (
+        <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-[13px] text-destructive">
+          <strong>API Error:</strong> {coreError}
+        </div>
+      )}
+      {awsWarning && (
+        <div className="rounded-lg border border-warning/30 bg-warning/5 px-4 py-3 text-[13px] text-warning">
+          <strong>AWS Telemetry:</strong> {awsWarning}
+        </div>
+      )}
+
+      {/* Tabs */}
+      <div className="-mx-4 overflow-x-auto px-4 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8">
+        <div className="flex items-center gap-1 border-b border-border">
+          {tabs.map((tab) => {
+            const Icon = tab.icon;
+            const active = activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setActiveTab(tab.id)}
+                className={cn(
+                  "flex items-center gap-2 whitespace-nowrap border-b-2 px-4 py-2.5 text-[13px] font-medium transition-colors",
+                  active
+                    ? "border-primary text-primary"
+                    : "border-transparent text-muted-foreground hover:border-border hover:text-foreground"
+                )}
+              >
+                <Icon className="h-4 w-4" />
+                {tab.label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* ═══ OVERVIEW ═══ */}
+      {activeTab === "overview" && (
+        <div className="space-y-6">
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <MetricCard icon={Server} label="Active labs" value={overview?.labs.active ?? 0} sub={`${overview?.labs.failed ?? 0} failed, ${overview?.labs.queued ?? 0} queued`} tone="blue" />
+            <MetricCard icon={HardDrive} label="Running compute" value={runningInstances} sub={`${instances.length} tagged hosts`} tone="green" />
+            <MetricCard icon={Shield} label="Security exposure" value={highRiskGroups} sub="high-risk groups" tone={highRiskGroups > 0 ? "red" : "green"} />
+            <MetricCard icon={DollarSign} label="Period spend" value={money(aws?.costs.total)} sub={`${slowJobs} slow jobs · ${activeUsers} active users`} tone="neutral" />
+          </div>
+
+          <div className="grid gap-6 lg:grid-cols-2">
+            <SectionCard title="Operator findings" description="Automated health checks">
+              <div className="space-y-3">
+                {highRiskGroups > 0 ? (
+                  <div className="flex items-start gap-3 rounded-lg border border-destructive/20 bg-destructive/5 px-4 py-3">
+                    <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
+                    <p className="text-[13px] text-destructive">High-risk security groups expose broad access. Inspect rules in Infrastructure.</p>
+                  </div>
+                ) : (
+                  <div className="flex items-start gap-3 rounded-lg border border-success/20 bg-success/5 px-4 py-3">
+                    <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-success" />
+                    <p className="text-[13px] text-success">No high-risk security group rules detected.</p>
+                  </div>
+                )}
+                {slowJobs > 0 && (
+                  <div className="flex items-start gap-3 rounded-lg border border-warning/20 bg-warning/5 px-4 py-3">
+                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+                    <p className="text-[13px] text-warning">Slow provisioning jobs present. Check the Jobs tab.</p>
+                  </div>
+                )}
+                {labs.some((l) => l.cleanup_required) && (
+                  <div className="flex items-start gap-3 rounded-lg border border-warning/20 bg-warning/5 px-4 py-3">
+                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+                    <p className="text-[13px] text-warning">Labs need cleanup verification to prevent orphaned spend.</p>
+                  </div>
+                )}
+              </div>
+            </SectionCard>
+
+            <SectionCard title="Quick stats">
+              <div className="grid grid-cols-2 gap-4">
+                {[
+                  { label: "Active labs", value: `${overview?.labs.active ?? 0} active, ${overview?.labs.failed ?? 0} failed` },
+                  { label: "Running compute", value: `${runningInstances} EC2 hosts` },
+                  { label: "Estimated spend", value: `${money(aws?.costs.total)} (${aws?.costs.period ?? "—"})` },
+                  { label: "Active users", value: `${activeUsers} consuming capacity` },
+                ].map((s) => (
+                  <div key={s.label} className="rounded-lg border border-border bg-secondary/30 p-3">
+                    <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">{s.label}</p>
+                    <p className="mt-1 text-[13px] font-medium text-foreground">{s.value}</p>
+                  </div>
+                ))}
+              </div>
+            </SectionCard>
+          </div>
+        </div>
+      )}
+
+      {/* ═══ LABS ═══ */}
+      {activeTab === "labs" && (
+        <SectionCard title="Labs" description="Lab sessions with lifecycle, TTL, cost, and admin actions">
+          <DataTable
+            data={labs}
+            loading={loading}
+            searchPlaceholder="Search labs by name, owner, status, IP…"
+            searchFn={(item, q) =>
+              [item.instance_id, item.template_title, item.owner_email, String(item.status), item.ec2_public_ip, item.cfn_stack_name]
+                .join(" ")
+                .toLowerCase()
+                .includes(q)
+            }
+            emptyMessage="No lab sessions found"
+            columns={[
+              {
+                key: "lab",
+                header: "Lab",
+                cell: (item) => (
+                  <button type="button" onClick={() => setDetail({ kind: "lab", item })} className="font-medium text-primary hover:underline">
+                    {item.template_title}
+                  </button>
+                ),
+              },
+              { key: "owner", header: "Owner", cell: (item) => item.owner_email },
+              { key: "status", header: "Status", cell: (item) => <StatusBadge status={String(item.status)} /> },
+              { key: "created", header: "Created", cell: (item) => fmt(item.started_at) },
+              { key: "ttl", header: "Expires", cell: (item) => fmt(item.expires_at) },
+              { key: "ip", header: "Public IP", cell: (item) => item.ec2_public_ip ?? "—" },
+              { key: "cost", header: "Est. cost", cell: (item) => money(item.estimated_aws_cost) },
+              {
+                key: "health",
+                header: "Health",
+                cell: (item) =>
+                  item.cleanup_required ? (
+                    <Badge tone="amber">cleanup</Badge>
+                  ) : (
+                    <Badge tone="green">tracked</Badge>
+                  ),
+              },
+              {
+                key: "actions",
+                header: "",
+                className: "w-1",
+                cell: (item) => (
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      title="Extend TTL by 2h"
+                      disabled={actionId === item.instance_id}
+                      onClick={() => void extendLab(item, 2)}
+                      className="rounded-md p-1.5 text-muted-foreground hover:bg-secondary hover:text-foreground disabled:opacity-40"
+                    >
+                      <Clock className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      title="Force stop"
+                      disabled={actionId === item.instance_id}
+                      onClick={() => setConfirmLab(item)}
+                      className="rounded-md p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive disabled:opacity-40"
+                    >
+                      <Square className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                ),
+              },
+            ]}
+          />
+        </SectionCard>
+      )}
+
+      {/* ═══ USERS ═══ */}
+      {activeTab === "users" && (
+        <SectionCard title="Users" description="Accounts, roles, credits, and activity">
+          <DataTable
+            data={users}
+            loading={loading}
+            searchPlaceholder="Search users by email, role…"
+            searchFn={(item, q) => [item.id, item.email, item.role, item.subscription_tier].join(" ").toLowerCase().includes(q)}
+            emptyMessage="No users found"
+            columns={[
+              {
+                key: "email",
+                header: "Email",
+                cell: (item) => (
+                  <button type="button" onClick={() => setDetail({ kind: "user", item })} className="font-medium text-primary hover:underline">
+                    {item.email}
+                  </button>
+                ),
+              },
+              { key: "role", header: "Role", cell: (item) => <Badge tone={item.role === "admin" ? "amber" : "neutral"}>{item.role}</Badge> },
+              {
+                key: "status",
+                header: "Status",
+                cell: (item) => <Badge tone={item.is_disabled ? "red" : "green"}>{item.is_disabled ? "disabled" : "active"}</Badge>,
+              },
+              { key: "credits", header: "Credits", cell: (item) => String(item.credits_balance) },
+              { key: "active", header: "Active labs", cell: (item) => String(item.active_labs ?? 0) },
+              { key: "total", header: "Total labs", cell: (item) => String(item.total_labs ?? 0) },
+              {
+                key: "spend",
+                header: "Est. spend",
+                cell: (item) => money(labs.filter((l) => l.owner_id === item.id).reduce((s, l) => s + (l.estimated_aws_cost ?? 0), 0)),
+              },
+              {
+                key: "actions",
+                header: "",
+                className: "w-1",
+                cell: (item) => (
+                  <button
+                    type="button"
+                    title="Add 5 credits"
+                    disabled={actionId === item.id}
+                    onClick={() => void addCredit(item)}
+                    className="rounded-md p-1.5 text-muted-foreground hover:bg-secondary hover:text-foreground disabled:opacity-40"
+                  >
+                    <CreditCard className="h-3.5 w-3.5" />
+                  </button>
+                ),
+              },
+            ]}
+          />
+        </SectionCard>
+      )}
+
+      {/* ═══ INFRASTRUCTURE ═══ */}
+      {activeTab === "infra" && (
+        <div className="space-y-6">
+          {/* Compute */}
+          <SectionCard title="EC2 Compute" description="Tagged Orchestryx lab hosts">
+            <DataTable
+              data={instances}
+              loading={loading}
+              searchPlaceholder="Search instances by name, ID, IP, state…"
+              searchFn={(item, q) =>
+                [item.id, item.name, item.public_ip, item.private_ip, item.lab_instance_id, item.state, item.az].join(" ").toLowerCase().includes(q)
               }
-              if (detail.id === "account") router.push("/account");
-            },
-          },
-        ]}
-      />
-      <AppLayout
-        contentType="table"
-        navigation={navigation}
-        navigationOpen={navigationOpen}
-        onNavigationChange={({ detail }) => setNavigationOpen(detail.open)}
-        breadcrumbs={breadcrumbs}
-        content={loading && !overview ? <Box padding="xxl"><Spinner size="large" /> Loading admin console</Box> : content}
-        toolsOpen={toolsOpen}
-        onToolsChange={({ detail }) => setToolsOpen(detail.open)}
-        tools={
-          <HelpPanel header={<Header variant="h2">Admin console help</Header>}>
-            <SpaceBetween size="s">
-              <Box>Use resource tables with property filters to narrow AWS resources, labs, users, jobs, and credit ledger entries.</Box>
-              <Box>Open the split panel from any resource row to inspect metadata, ownership, links, and debug details without losing table context.</Box>
-              <Box>Destructive or costly actions require confirmations or are left as TODO until protected backend endpoints exist.</Box>
-            </SpaceBetween>
-          </HelpPanel>
-        }
-        splitPanel={<DetailSplitPanel resource={inspector} labs={labs} events={events} />}
-        splitPanelOpen={splitPanelOpen}
-        onSplitPanelToggle={({ detail }) => setSplitPanelOpen(detail.open)}
-        splitPanelPreferences={{ position: "side" }}
-        notifications={<Flashbar items={flashItems} />}
-      />
-      <Modal
-        visible={Boolean(confirmLab)}
-        onDismiss={() => setConfirmLab(null)}
-        header="Force stop lab?"
-        closeAriaLabel="Close modal"
-        footer={
-          <Box float="right">
-            <SpaceBetween direction="horizontal" size="xs">
-              <Button variant="link" onClick={() => setConfirmLab(null)}>Cancel</Button>
-              <Button variant="primary" loading={Boolean(actionId)} onClick={stopLab}>Queue teardown</Button>
-            </SpaceBetween>
-          </Box>
-        }
-      >
-        {confirmLab ? (
-          <SpaceBetween size="s">
-            <Alert type="warning">This marks the lab as destroying and queues the worker teardown flow.</Alert>
-            <KeyValuePairs items={[
-              { label: "Lab", value: confirmLab.template_title },
-              { label: "Instance ID", value: confirmLab.instance_id },
-              { label: "Owner", value: confirmLab.owner_email },
-              { label: "Current status", value: <Status value={String(confirmLab.status)} /> },
-            ]} />
-          </SpaceBetween>
-        ) : null}
-      </Modal>
-    </>
+              emptyMessage="No EC2 instances"
+              columns={[
+                {
+                  key: "name",
+                  header: "Name",
+                  cell: (item) => (
+                    <button type="button" onClick={() => setDetail({ kind: "instance", item })} className="font-medium text-primary hover:underline">
+                      {item.name ?? item.id ?? "—"}
+                    </button>
+                  ),
+                },
+                { key: "state", header: "State", cell: (item) => <Badge tone={statusColor(item.state)}>{item.state ?? "—"}</Badge> },
+                { key: "type", header: "Type", cell: (item) => item.type ?? "—" },
+                { key: "az", header: "AZ", cell: (item) => item.az ?? "—" },
+                { key: "ip", header: "Public IP", cell: (item) => item.public_ip ?? "—" },
+                { key: "lab", header: "Linked lab", cell: (item) => compact(item.lab_instance_id) },
+                {
+                  key: "owner",
+                  header: "Owner",
+                  cell: (item) =>
+                    labs.find((l) => l.instance_id === item.lab_instance_id || l.ec2_public_ip === item.public_ip)?.owner_email ?? "—",
+                },
+                { key: "uptime", header: "Uptime", cell: (item) => `${item.uptime_hours ?? 0}h` },
+                { key: "cost", header: "Est. cost", cell: (item) => money(item.estimated_running_cost) },
+              ]}
+            />
+          </SectionCard>
+
+          {/* Networking */}
+          <SectionCard title="Networking" description="VPCs, subnets, and load balancing">
+            <div className="space-y-4">
+              {(aws?.network.vpcs ?? []).length > 0 && (
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                  {(aws?.network.vpcs ?? []).map((vpc) => (
+                    <div key={vpc.id} className="rounded-lg border border-border bg-secondary/20 p-4">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[13px] font-medium text-foreground">{vpc.id}</span>
+                        {vpc.console_url && (
+                          <a href={vpc.console_url} target="_blank" rel="noreferrer" className="text-primary hover:text-primary/80">
+                            <ArrowUpRight className="h-3 w-3" />
+                          </a>
+                        )}
+                      </div>
+                      <p className="mt-1 text-[12px] text-muted-foreground">CIDR: {vpc.cidr ?? "—"} · {vpc.is_default ? "default" : "custom"}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {(aws?.network.subnets ?? []).length > 0 && (
+                <div className="-mx-5 overflow-x-auto">
+                  <table className="w-full text-[13px]">
+                    <thead>
+                      <tr className="border-b border-border bg-secondary/30">
+                        <th className="px-5 py-2 text-left text-[11px] font-medium uppercase tracking-wider text-muted-foreground">Subnet ID</th>
+                        <th className="px-5 py-2 text-left text-[11px] font-medium uppercase tracking-wider text-muted-foreground">VPC</th>
+                        <th className="px-5 py-2 text-left text-[11px] font-medium uppercase tracking-wider text-muted-foreground">AZ</th>
+                        <th className="px-5 py-2 text-left text-[11px] font-medium uppercase tracking-wider text-muted-foreground">CIDR</th>
+                        <th className="px-5 py-2 text-left text-[11px] font-medium uppercase tracking-wider text-muted-foreground">Avail IPs</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border">
+                      {(aws?.network.subnets ?? []).map((s) => (
+                        <tr key={s.id} className="hover:bg-secondary/30">
+                          <td className="px-5 py-2.5 text-foreground">
+                            {s.console_url ? (
+                              <a href={s.console_url} target="_blank" rel="noreferrer" className="text-primary hover:underline">{s.id}</a>
+                            ) : s.id}
+                          </td>
+                          <td className="px-5 py-2.5 text-muted-foreground">{s.vpc_id}</td>
+                          <td className="px-5 py-2.5 text-muted-foreground">{s.az}</td>
+                          <td className="px-5 py-2.5 text-muted-foreground">{s.cidr}</td>
+                          <td className="px-5 py-2.5 text-muted-foreground">{s.available_ips}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              <div className="grid gap-4 lg:grid-cols-2">
+                {(aws?.load_balancing.load_balancers ?? []).length > 0 && (
+                  <div>
+                    <h4 className="mb-2 text-[12px] font-medium uppercase tracking-wider text-muted-foreground">Load balancers</h4>
+                    <div className="space-y-2">
+                      {(aws?.load_balancing.load_balancers ?? []).map((lb) => (
+                        <div key={lb.arn ?? lb.name} className="flex items-center justify-between rounded-lg border border-border bg-secondary/20 px-4 py-2.5">
+                          <div>
+                            <span className="text-[13px] font-medium text-foreground">{lb.name}</span>
+                            <p className="text-[12px] text-muted-foreground">{lb.scheme} · <Badge tone={statusColor(lb.state)}>{lb.state ?? "—"}</Badge></p>
+                          </div>
+                          {lb.console_url && (
+                            <a href={lb.console_url} target="_blank" rel="noreferrer" className="text-primary"><ArrowUpRight className="h-3.5 w-3.5" /></a>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {(aws?.load_balancing.target_groups ?? []).length > 0 && (
+                  <div>
+                    <h4 className="mb-2 text-[12px] font-medium uppercase tracking-wider text-muted-foreground">Target groups</h4>
+                    <div className="space-y-2">
+                      {(aws?.load_balancing.target_groups ?? []).map((tg) => (
+                        <div key={tg.arn ?? tg.name} className="flex items-center justify-between rounded-lg border border-border bg-secondary/20 px-4 py-2.5">
+                          <div>
+                            <span className="text-[13px] font-medium text-foreground">{tg.name}</span>
+                            <p className="text-[12px] text-muted-foreground">{tg.protocol}:{tg.port} · {tg.target_type}</p>
+                          </div>
+                          {tg.console_url && (
+                            <a href={tg.console_url} target="_blank" rel="noreferrer" className="text-primary"><ArrowUpRight className="h-3.5 w-3.5" /></a>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </SectionCard>
+
+          {/* Security groups */}
+          <SectionCard title="Security Groups" description="Rule-level debugger with risk classification">
+            <DataTable
+              data={securityGroups}
+              loading={loading}
+              searchPlaceholder="Search by name, ID, risk…"
+              searchFn={(item, q) => [item.id, item.name, item.description, item.vpc_id, item.risk_level].join(" ").toLowerCase().includes(q)}
+              emptyMessage="No security groups"
+              columns={[
+                {
+                  key: "name",
+                  header: "Security group",
+                  cell: (item) => (
+                    <button type="button" onClick={() => setDetail({ kind: "sg", item })} className="font-medium text-primary hover:underline">
+                      {item.name ?? item.id ?? "—"}
+                    </button>
+                  ),
+                },
+                { key: "vpc", header: "VPC", cell: (item) => item.vpc_id ?? "—" },
+                { key: "attached", header: "Attached", cell: (item) => String(item.attached_count ?? 0) },
+                { key: "inbound", header: "Inbound", cell: (item) => String(item.ingress_rules ?? 0) },
+                { key: "outbound", header: "Outbound", cell: (item) => String(item.egress_rules ?? 0) },
+                {
+                  key: "risk",
+                  header: "Risk",
+                  cell: (item) => <Badge tone={item.risk_level === "high" ? "red" : item.risk_level === "medium" ? "amber" : "green"}>{item.risk_level ?? "low"}</Badge>,
+                },
+              ]}
+            />
+          </SectionCard>
+
+          {/* Storage */}
+          <SectionCard title="Storage & Secrets" description="ECR images and Secrets Manager">
+            <div className="space-y-4">
+              {([aws?.ecr.api, aws?.ecr.worker].filter(Boolean) as NonNullable<typeof aws>["ecr"]["api"][]).length > 0 && (
+                <div>
+                  <h4 className="mb-2 text-[12px] font-medium uppercase tracking-wider text-muted-foreground">ECR images</h4>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    {[aws?.ecr.api, aws?.ecr.worker].filter(Boolean).map((img) => (
+                      <div key={img!.repository} className="rounded-lg border border-border bg-secondary/20 p-4">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[13px] font-medium text-foreground">{img!.repository}</span>
+                          <Badge tone={statusColor(img!.status)}>{img!.status}</Badge>
+                        </div>
+                        <p className="mt-1 text-[12px] text-muted-foreground">
+                          {img!.size_mb ?? 0} MB · Pushed {fmt(img!.pushed_at)} · Tags: {img!.tags?.join(", ") ?? "—"}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {(aws?.secrets.items ?? []).length > 0 && (
+                <div>
+                  <h4 className="mb-2 text-[12px] font-medium uppercase tracking-wider text-muted-foreground">Secrets Manager</h4>
+                  <div className="space-y-2">
+                    {(aws?.secrets.items ?? []).map((s) => (
+                      <div key={s.name} className="flex items-center justify-between rounded-lg border border-border bg-secondary/20 px-4 py-2.5">
+                        <div>
+                          <span className="text-[13px] font-medium text-foreground">{s.name}</span>
+                          <p className="text-[12px] text-muted-foreground">
+                            Changed {fmt(s.last_changed_at)} · Rotation: {s.rotation_enabled ? "enabled" : "disabled"}
+                          </p>
+                        </div>
+                        {s.console_url && (
+                          <a href={s.console_url} target="_blank" rel="noreferrer" className="text-primary"><ArrowUpRight className="h-3.5 w-3.5" /></a>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </SectionCard>
+        </div>
+      )}
+
+      {/* ═══ BILLING ═══ */}
+      {activeTab === "billing" && (
+        <div className="space-y-6">
+          <div className="grid gap-4 sm:grid-cols-3">
+            <MetricCard icon={DollarSign} label="Cost Explorer" value={money(aws?.costs.total)} sub={aws?.costs.period ?? "—"} tone="blue" />
+            <MetricCard
+              icon={HardDrive}
+              label="Running EC2 cost"
+              value={money(instances.reduce((s, i) => s + (i.estimated_running_cost ?? 0), 0))}
+              tone="neutral"
+            />
+            <MetricCard icon={CreditCard} label="Outstanding credits" value={overview?.credits.outstanding_balance.toFixed(1) ?? "0"} tone="neutral" />
+          </div>
+
+          <div className="grid gap-6 lg:grid-cols-2">
+            <SectionCard title="Spend per AWS service">
+              {(aws?.costs.services ?? []).length > 0 ? (
+                <div className="divide-y divide-border">
+                  {(aws?.costs.services ?? []).map((s) => (
+                    <div key={s.service} className="flex items-center justify-between py-2.5 text-[13px]">
+                      <span className="text-foreground">{s.service}</span>
+                      <span className="font-medium tabular-nums text-foreground">{money(s.amount)}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-[13px] text-muted-foreground">No cost data available.</p>
+              )}
+            </SectionCard>
+
+            <SectionCard title="Spend per lab">
+              {labs.length > 0 ? (
+                <div className="divide-y divide-border">
+                  {labs.slice(0, 15).map((l) => (
+                    <div key={l.instance_id} className="flex items-center justify-between py-2.5 text-[13px]">
+                      <div className="min-w-0">
+                        <span className="font-medium text-foreground">{l.template_title}</span>
+                        <span className="ml-2 text-muted-foreground">{l.owner_email}</span>
+                      </div>
+                      <span className="shrink-0 font-medium tabular-nums text-foreground">{money(l.estimated_aws_cost)}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-[13px] text-muted-foreground">No labs to display.</p>
+              )}
+            </SectionCard>
+          </div>
+
+          <SectionCard title="Credit transactions" description="Append-only credit ledger">
+            <DataTable
+              data={credits}
+              loading={loading}
+              searchPlaceholder="Search by user, reason…"
+              searchFn={(item, q) => [item.user_id, item.reason].join(" ").toLowerCase().includes(q)}
+              emptyMessage="No credit transactions"
+              columns={[
+                {
+                  key: "delta",
+                  header: "Delta",
+                  cell: (item) => (
+                    <span className={cn("font-medium tabular-nums", item.delta >= 0 ? "text-success" : "text-destructive")}>
+                      {item.delta >= 0 ? `+${item.delta}` : item.delta}
+                    </span>
+                  ),
+                },
+                { key: "user", header: "User ID", cell: (item) => compact(item.user_id, 20) },
+                { key: "reason", header: "Reason", cell: (item) => item.reason },
+                { key: "created", header: "Created", cell: (item) => fmt(item.created_at) },
+              ]}
+            />
+          </SectionCard>
+        </div>
+      )}
+
+      {/* ═══ JOBS ═══ */}
+      {activeTab === "jobs" && (
+        <SectionCard title="Provisioning Jobs" description="Lifecycle jobs with steps, retries, errors, and cleanup">
+          <DataTable
+            data={jobs}
+            loading={loading}
+            searchPlaceholder="Search by lab, user, status, error…"
+            searchFn={(item, q) =>
+              [item.id, item.template_title, item.owner_email, String(item.status), item.current_step, item.error, item.cleanup_status]
+                .join(" ")
+                .toLowerCase()
+                .includes(q)
+            }
+            emptyMessage="No provisioning jobs"
+            columns={[
+              {
+                key: "id",
+                header: "Job ID",
+                cell: (item) => (
+                  <button type="button" onClick={() => setDetail({ kind: "job", item })} className="font-medium text-primary hover:underline">
+                    {compact(item.id)}
+                  </button>
+                ),
+              },
+              { key: "lab", header: "Lab", cell: (item) => item.template_title },
+              { key: "user", header: "User", cell: (item) => item.owner_email },
+              { key: "status", header: "Status", cell: (item) => <StatusBadge status={String(item.status)} /> },
+              { key: "step", header: "Current step", cell: (item) => item.current_step },
+              { key: "duration", header: "Duration", cell: (item) => `${item.duration_hours}h` },
+              { key: "retries", header: "Retries", cell: (item) => String(item.retries) },
+              { key: "error", header: "Error", cell: (item) => item.error ? <span className="text-destructive">{compact(item.error, 30)}</span> : "—" },
+              {
+                key: "cleanup",
+                header: "Cleanup",
+                cell: (item) => <Badge tone={statusColor(item.cleanup_status)}>{item.cleanup_status}</Badge>,
+              },
+            ]}
+          />
+        </SectionCard>
+      )}
+
+      {/* ═══ LOGS ═══ */}
+      {activeTab === "logs" && (
+        <SectionCard
+          title="CloudWatch Log Tail"
+          description="Live tail from ECS services"
+          actions={
+            <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1 rounded-lg border border-border bg-muted/60 p-0.5">
+                {(["worker", "api"] as const).map((svc) => (
+                  <button
+                    key={svc}
+                    type="button"
+                    onClick={() => void loadLogs(svc)}
+                    className={cn(
+                      "rounded-md px-3 py-1 text-[12px] font-medium transition",
+                      logService === svc ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+                    )}
+                  >
+                    {svc}
+                  </button>
+                ))}
+              </div>
+              <Button variant="ghost" size="sm" onClick={() => copyText(logs)} title="Copy logs">
+                <Copy className="h-3.5 w-3.5" />
+              </Button>
+              {(logService === "api" ? aws?.logs.api.console_url : aws?.logs.worker.console_url) && (
+                <a
+                  href={(logService === "api" ? aws?.logs.api.console_url : aws?.logs.worker.console_url)!}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1 text-[12px] text-primary hover:underline"
+                >
+                  CloudWatch <ArrowUpRight className="h-3 w-3" />
+                </a>
+              )}
+            </div>
+          }
+        >
+          <pre className="max-h-[600px] overflow-auto rounded-lg border border-border bg-[var(--color-card)] p-4 font-mono text-[12px] leading-relaxed text-foreground">
+            {logs || "Select a service to load logs."}
+          </pre>
+        </SectionCard>
+      )}
+
+      {/* ═══ SETTINGS ═══ */}
+      {activeTab === "settings" && (
+        <div className="grid gap-6 lg:grid-cols-2">
+          <SectionCard title="Telemetry inputs" description="Environment and AWS configuration">
+            <div className="divide-y divide-border">
+              <KVRow label="Environment">{process.env.NODE_ENV ?? "development"}</KVRow>
+              <KVRow label="API URL">{process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"}</KVRow>
+              <KVRow label="AWS region">{aws?.region ?? "—"}</KVRow>
+              <KVRow label="ECS cluster">{aws?.cluster ?? "—"}</KVRow>
+              <KVRow label="API log group">{aws?.logs.api.name ?? "—"}</KVRow>
+              <KVRow label="Worker log group">{aws?.logs.worker.name ?? "—"}</KVRow>
+            </div>
+          </SectionCard>
+
+          <SectionCard title="Implemented actions" description="Backend action status">
+            <div className="space-y-3">
+              {[
+                { ok: true, text: "Lab stop queues real backend teardown." },
+                { ok: true, text: "TTL extension writes real lab event/state." },
+                { ok: true, text: "Credit grants write the credit ledger." },
+                { ok: false, text: "EC2 reboot/terminate and SG remediation are TODO." },
+              ].map((a) => (
+                <div key={a.text} className="flex items-start gap-3">
+                  {a.ok ? (
+                    <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-success" />
+                  ) : (
+                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+                  )}
+                  <span className="text-[13px] text-foreground">{a.text}</span>
+                </div>
+              ))}
+            </div>
+          </SectionCard>
+        </div>
+      )}
+
+      {/* ─── Detail dialog ─── */}
+      <Dialog open={detail !== null} onOpenChange={(open) => !open && setDetail(null)}>
+        <DialogContent className="max-h-[85vh] w-[min(calc(100vw-2rem),48rem)] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>
+              {detail?.kind === "lab" && `Lab: ${detail.item.template_title}`}
+              {detail?.kind === "user" && `User: ${detail.item.email}`}
+              {detail?.kind === "instance" && `EC2: ${detail.item.name ?? detail.item.id}`}
+              {detail?.kind === "sg" && `SG: ${detail.item.name ?? detail.item.id}`}
+              {detail?.kind === "job" && `Job: ${detail.item.template_title}`}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="mt-4">
+            {detail?.kind === "lab" && <LabDetail lab={detail.item} events={events} />}
+            {detail?.kind === "user" && <UserDetail user={detail.item} labs={labs} />}
+            {detail?.kind === "instance" && <InstanceDetail instance={detail.item} labs={labs} />}
+            {detail?.kind === "sg" && <SGDetail sg={detail.item} />}
+            {detail?.kind === "job" && <JobDetail job={detail.item} />}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* ─── Stop lab confirmation ─── */}
+      <Dialog open={confirmLab !== null} onOpenChange={(open) => !open && setConfirmLab(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Force stop lab?</DialogTitle>
+            <DialogDescription>
+              This marks the lab as destroying and queues the worker teardown flow.
+            </DialogDescription>
+          </DialogHeader>
+          {confirmLab && (
+            <div className="mt-4 divide-y divide-border rounded-lg border border-border bg-secondary/30 p-4">
+              <KVRow label="Lab">{confirmLab.template_title}</KVRow>
+              <KVRow label="Instance ID">{compact(confirmLab.instance_id, 24)}</KVRow>
+              <KVRow label="Owner">{confirmLab.owner_email}</KVRow>
+              <KVRow label="Status"><StatusBadge status={String(confirmLab.status)} /></KVRow>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="secondary" onClick={() => setConfirmLab(null)}>Cancel</Button>
+            <Button variant="danger" disabled={Boolean(actionId)} onClick={() => void stopLab()}>
+              {actionId ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+              Queue teardown
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Toasts items={toasts} onDismiss={dismissToast} />
+    </div>
   );
 }

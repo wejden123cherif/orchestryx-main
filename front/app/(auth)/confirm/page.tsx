@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { FormEvent, Suspense, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { ArrowRight } from "lucide-react";
 import { AuthShell } from "@/components/auth/auth-shell";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -71,20 +72,20 @@ function ConfirmForm() {
 
   return (
     <AuthShell
-      title="Confirm email"
-      description="Enter the six digit verification code sent to your inbox."
-      altQuestion="Back at the start?"
+      title="Confirm your email"
+      description="Enter the 6-digit code we sent to your inbox."
+      altQuestion="Back to the start?"
       altHref="/login"
       altLabel="Return to sign in"
     >
       <form onSubmit={handleSubmit} className="space-y-5">
         {errorMessage ? (
-          <p className="rounded-lg border border-destructive/35 bg-destructive/10 px-3 py-2 text-sm text-red-300">
+          <p className="rounded-lg border border-destructive/25 bg-destructive/5 px-3.5 py-2.5 text-[13px] text-destructive">
             {errorMessage}
           </p>
         ) : null}
 
-        <div className="space-y-2">
+        <div className="space-y-1.5">
           <Label htmlFor="email">Email address</Label>
           <Input
             id="email"
@@ -93,10 +94,11 @@ function ConfirmForm() {
             onChange={(event) => setEmail(event.target.value)}
             autoComplete="email"
             required
+            className="h-10"
           />
         </div>
 
-        <div className="space-y-3">
+        <div className="space-y-2">
           <Label>Verification code</Label>
           <div className="grid grid-cols-6 gap-2">
             {digits.map((digit, index) => (
@@ -118,22 +120,23 @@ function ConfirmForm() {
                 }}
                 inputMode="numeric"
                 autoComplete="one-time-code"
-                className="focus-ring mono h-12 rounded-lg border border-input bg-[#0d0d13] text-center text-lg text-foreground"
-                aria-label={`Verification code digit ${index + 1}`}
+                className="mono h-12 rounded-lg border border-input bg-card text-center text-lg text-foreground shadow-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
+                aria-label={`Digit ${index + 1}`}
               />
             ))}
           </div>
         </div>
 
-        <Button type="submit" disabled={isSubmitting} className="w-full">
-          {isSubmitting ? "Confirming..." : "Confirm email"}
+        <Button type="submit" size="lg" disabled={isSubmitting} className="w-full">
+          {isSubmitting ? "Verifying..." : "Verify email"}
+          {!isSubmitting && <ArrowRight className="h-4 w-4" />}
         </Button>
       </form>
 
-      <p className="mt-5 text-sm text-muted-foreground">
-        Need a new code?{" "}
-        <Link href="/register" className="text-primary hover:text-[#818cf8]">
-          Start registration again
+      <p className="mt-5 text-center text-[13px] text-muted-foreground">
+        Didn&apos;t get a code?{" "}
+        <Link href="/register" className="font-medium text-primary hover:text-primary/80">
+          Resend
         </Link>
       </p>
     </AuthShell>

@@ -1,11 +1,10 @@
 import type { Metadata } from "next";
 import { Inter, JetBrains_Mono } from "next/font/google";
 import { AuthProvider } from "@/context/AuthContext";
+import { ThemeProvider } from "@/context/ThemeContext";
 import { ToastProvider } from "@/components/ui/toast";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import "./globals.css";
-import "@xyflow/react/dist/style.css";
-import "@cloudscape-design/global-styles/index.css";
 
 const inter = Inter({
   variable: "--font-inter",
@@ -33,18 +32,21 @@ export default function RootLayout({
     <html
       lang="en"
       data-scroll-behavior="smooth"
+      data-accent="purple"
       suppressHydrationWarning
-      className={`${inter.variable} ${jetBrainsMono.variable} h-full antialiased`}
+      className={`${inter.variable} ${jetBrainsMono.variable} dark h-full antialiased`}
     >
       <body
         suppressHydrationWarning
         className="min-h-full bg-background text-foreground"
       >
-        <TooltipProvider delayDuration={250}>
-          <ToastProvider>
-            <AuthProvider>{children}</AuthProvider>
-          </ToastProvider>
-        </TooltipProvider>
+        <ThemeProvider>
+          <TooltipProvider delayDuration={250}>
+            <ToastProvider>
+              <AuthProvider>{children}</AuthProvider>
+            </ToastProvider>
+          </TooltipProvider>
+        </ThemeProvider>
       </body>
     </html>
   );

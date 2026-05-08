@@ -612,7 +612,7 @@ function BuilderPageContent() {
           </div>
         </aside>
 
-        <div className="relative overflow-hidden rounded-xl border border-border bg-[#0b0b11]">
+        <div className="relative overflow-hidden rounded-xl border border-border bg-card">
           <div
             className="h-[720px]"
             onDragOver={(event) => {
@@ -743,7 +743,7 @@ function MachineConfigPanel({
                     <select
                       value={item.version}
                       onChange={(event) => onSoftwareVersionChange(item.name, event.target.value)}
-                      className="focus-ring rounded-lg border border-input bg-[#0d0d13] px-2 py-1 text-sm text-foreground"
+                      className="focus-ring rounded-lg border border-input bg-background px-2 py-1 text-sm text-foreground"
                     >
                       {versions.map((version) => (
                         <option key={version} value={version}>
@@ -793,7 +793,7 @@ function MachineConfigPanel({
                     ports: data.ports.filter((item) => item !== port),
                   }))
                 }
-                className="rounded-full border border-border bg-secondary px-2.5 py-1 text-xs text-foreground hover:border-destructive/45 hover:text-red-300"
+                className="rounded-full border border-border bg-secondary px-2.5 py-1 text-xs text-foreground hover:border-destructive/45 hover:text-destructive"
               >
                 {port}
               </button>
@@ -1064,7 +1064,7 @@ function SelectField({
         id={id}
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className="focus-ring h-10 w-full rounded-lg border border-input bg-[#0d0d13] px-3 text-sm text-foreground"
+        className="focus-ring h-10 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground"
       >
         {options.map((option) => (
           <option key={option} value={option}>

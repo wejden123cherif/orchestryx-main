@@ -4,6 +4,7 @@ import Link from "next/link";
 import type { Route } from "next";
 import { useCallback, useEffect, useState } from "react";
 import { Download, ExternalLink, Server, Square } from "lucide-react";
+import { ConfirmActionDialog } from "@/components/platform/confirm-dialog";
 import { EmptyState } from "@/components/platform/empty-state";
 import { StatusBadge } from "@/components/platform/status-badge";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -46,6 +47,7 @@ export default function LabsPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [actionId, setActionId] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [confirmStopId, setConfirmStopId] = useState<string | null>(null);
 
   const loadLabs = useCallback(async () => {
     if (!isAuthReady || !tokens?.access_token) {
@@ -133,7 +135,7 @@ export default function LabsPage() {
       </header>
 
       {errorMessage ? (
-        <div className="rounded-lg border border-destructive/35 bg-destructive/10 px-4 py-3 text-sm text-red-300">
+        <div className="rounded-lg border border-destructive/30 bg-destructive/8 px-4 py-3 text-sm text-destructive">
           {errorMessage}
         </div>
       ) : null}
@@ -199,7 +201,7 @@ export default function LabsPage() {
                     actionId === lab.instance_id ||
                     ["FAILED", "EXPIRED", "STOPPED"].includes(normalizeLabStatus(lab.status))
                   }
-                  onClick={() => stop(lab.instance_id)}
+                  onClick={() => setConfirmStopId(lab.instance_id)}
                 >
                   <Square className="h-3.5 w-3.5" />
                   Stop
@@ -223,6 +225,19 @@ export default function LabsPage() {
           }
         />
       )}
+
+      <ConfirmActionDialog
+        open={Boolean(confirmStopId)}
+        onOpenChange={(open) => { if (!open) setConfirmStopId(null); }}
+        title="Stop lab environment?"
+        description="This will queue teardown of the lab. AWS resources will be cleaned up and the session will end."
+        confirmLabel="Stop lab"
+        loading={Boolean(actionId)}
+        onConfirm={() => {
+          if (confirmStopId) void stop(confirmStopId);
+          setConfirmStopId(null);
+        }}
+      />
     </div>
   );
 }

@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import type { FormEvent } from "react";
 import { useCallback, useEffect, useState } from "react";
 import { ArrowLeft, CheckCircle2, Download, ExternalLink, Flag, Network, Square } from "lucide-react";
+import { ConfirmActionDialog } from "@/components/platform/confirm-dialog";
 import { StatusBadge } from "@/components/platform/status-badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -35,6 +36,7 @@ export default function LabDetailPage() {
   const [lab, setLab] = useState<LabStatusResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isWorking, setIsWorking] = useState(false);
+  const [confirmStop, setConfirmStop] = useState(false);
   const [flagInput, setFlagInput] = useState("");
   const [isSubmittingFlag, setIsSubmittingFlag] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -323,7 +325,7 @@ export default function LabDetailPage() {
             Template {lab.template_id} - expires in {getTimeRemaining(lab.expires_at)}
           </p>
         </div>
-        <Button type="button" variant="danger" disabled={isWorking} onClick={destroyLab}>
+        <Button type="button" variant="danger" disabled={isWorking} onClick={() => setConfirmStop(true)}>
           <Square className="h-4 w-4" />
           Stop lab
         </Button>
@@ -345,7 +347,7 @@ export default function LabDetailPage() {
                     href={lab.challenge_url}
                     target="_blank"
                     rel="noreferrer"
-                    className="mono mt-1 flex min-w-0 items-center gap-1.5 truncate text-sm text-primary hover:text-[#818cf8]"
+                    className="mono mt-1 flex min-w-0 items-center gap-1.5 truncate text-sm text-primary hover:text-primary/80"
                   >
                     <span className="truncate">{lab.challenge_url}</span>
                     <ExternalLink className="h-3.5 w-3.5 shrink-0" />
@@ -427,6 +429,19 @@ export default function LabDetailPage() {
           </Button>
         </aside>
       </section>
+
+      <ConfirmActionDialog
+        open={confirmStop}
+        onOpenChange={setConfirmStop}
+        title="Stop lab environment?"
+        description="This will queue teardown of the lab. AWS resources will be cleaned up and the session will end."
+        confirmLabel="Stop lab"
+        loading={isWorking}
+        onConfirm={() => {
+          setConfirmStop(false);
+          void destroyLab();
+        }}
+      />
     </div>
   );
 }

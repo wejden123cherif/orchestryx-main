@@ -1,41 +1,25 @@
 import type { NormalizedLabStatus } from "@/lib/types";
 import { cn, normalizeLabStatus } from "@/lib/utils";
 
-const statusStyles: Record<NormalizedLabStatus, string> = {
-  QUEUED: "text-sky-300",
-  PROVISIONING: "text-indigo-200",
-  STARTING: "text-cyan-300",
-  READY: "text-green-300",
-  DESTROYING: "text-amber-300",
-  STOPPED: "text-muted-foreground",
-  EXPIRED: "text-orange-300",
-  FAILED: "text-red-300",
+const statusConfig: Record<NormalizedLabStatus, { text: string; dot: string }> = {
+  QUEUED:       { text: "text-sky-600 dark:text-sky-400",    dot: "bg-sky-500" },
+  PROVISIONING: { text: "text-primary",                      dot: "bg-primary pulse-dot" },
+  STARTING:     { text: "text-cyan-600 dark:text-cyan-400",  dot: "bg-cyan-500 pulse-dot" },
+  READY:        { text: "text-success",                      dot: "bg-success" },
+  DESTROYING:   { text: "text-warning",                      dot: "bg-warning pulse-dot" },
+  STOPPED:      { text: "text-muted-foreground",             dot: "bg-muted-foreground" },
+  EXPIRED:      { text: "text-orange-600 dark:text-orange-400", dot: "bg-orange-500" },
+  FAILED:       { text: "text-destructive",                  dot: "bg-destructive" },
 };
 
-export function StatusBadge({
-  status,
-  className,
-}: {
-  status: string;
-  className?: string;
-}) {
-  const tone =
-    statusStyles[normalizeLabStatus(status.toString())] ?? "text-muted-foreground";
-
-  const label = normalizeLabStatus(status.toString())
-    .toString()
-    .toLowerCase()
-    .replace(/^\w/, (character) => character.toUpperCase());
+export function StatusBadge({ status, className }: { status: string; className?: string }) {
+  const normalized = normalizeLabStatus(status.toString());
+  const config = statusConfig[normalized] ?? statusConfig.FAILED;
+  const label = normalized.toLowerCase().replace(/^\w/, (c) => c.toUpperCase());
 
   return (
-    <span
-      className={cn(
-        "inline-flex items-center gap-1.5 rounded-full border border-border bg-secondary/70 px-2.5 py-1 text-xs",
-        tone,
-        className
-      )}
-    >
-      <span className="h-1.5 w-1.5 rounded-full bg-current" />
+    <span className={cn("inline-flex items-center gap-1.5 text-xs font-medium", config.text, className)}>
+      <span className={cn("h-1.5 w-1.5 rounded-full", config.dot)} />
       {label}
     </span>
   );

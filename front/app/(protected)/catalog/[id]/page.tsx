@@ -197,7 +197,7 @@ export default function CatalogDetailPage() {
           </div>
 
           {insufficientCredits ? (
-            <p className="mt-4 rounded-lg border border-warning/35 bg-warning/10 px-3 py-2 text-sm text-amber-300">
+            <p className="mt-4 rounded-lg border border-warning/30 bg-warning/8 px-3 py-2 text-sm text-warning">
               Insufficient credits for this lab.
             </p>
           ) : null}

@@ -2,7 +2,18 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Boxes, Search } from "lucide-react";
+import {
+  Boxes,
+  Bug,
+  Globe,
+  HardDrive,
+  Landmark,
+  Network,
+  PackageSearch,
+  Search,
+  ShieldAlert,
+  Workflow,
+} from "lucide-react";
 import { EmptyState } from "@/components/platform/empty-state";
 import { TemplateCard } from "@/components/platform/template-card";
 import { Button } from "@/components/ui/button";
@@ -11,10 +22,20 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/components/ui/toast";
 import { extractApiErrorMessage, getCatalog, startLab } from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
+import { seedCatalog } from "@/lib/seed-catalog";
 import type { CatalogFilter, LabTemplate } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-const filters: CatalogFilter[] = ["All", "Web", "Network", "Active Directory", "DFIR", "Malware"];
+const filters: { label: CatalogFilter; icon: typeof Boxes }[] = [
+  { label: "All", icon: Boxes },
+  { label: "Web App", icon: Globe },
+  { label: "CI/CD", icon: Workflow },
+  { label: "VulnHub", icon: HardDrive },
+  { label: "Active Directory", icon: Landmark },
+  { label: "Network", icon: Network },
+  { label: "DFIR", icon: PackageSearch },
+  { label: "Malware", icon: Bug },
+];
 
 function CatalogSkeleton() {
   return (
@@ -38,60 +59,58 @@ export default function CatalogPage() {
   const router = useRouter();
   const { toast } = useToast();
   const { isAuthReady, tokens } = useAuth();
-  const [templates, setTemplates] = useState<LabTemplate[]>([]);
+  const [apiTemplates, setApiTemplates] = useState<LabTemplate[]>([]);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<CatalogFilter>("All");
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(false);
   const [startingId, setStartingId] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const loadCatalog = useCallback(async () => {
-    if (!isAuthReady || !tokens?.access_token) {
-      return;
-    }
+    if (!isAuthReady || !tokens?.access_token) return;
 
     setIsLoading(true);
     setErrorMessage(null);
 
     try {
-      setTemplates(await getCatalog());
-    } catch (error) {
-      console.error("Failed to load catalog", error);
-      setErrorMessage(extractApiErrorMessage(error));
+      const data = await getCatalog();
+      if (data.length > 0) setApiTemplates(data);
+    } catch {
+      // API unreachable — seed catalog is used as fallback
     } finally {
       setIsLoading(false);
     }
   }, [isAuthReady, tokens?.access_token]);
 
   useEffect(() => {
-    if (!isAuthReady || !tokens?.access_token) {
-      return;
-    }
-
+    if (!isAuthReady || !tokens?.access_token) return;
     void Promise.resolve().then(loadCatalog);
   }, [isAuthReady, loadCatalog, tokens?.access_token]);
 
+  const templates = apiTemplates.length > 0 ? apiTemplates : seedCatalog;
+
   const filteredTemplates = useMemo(() => {
-    const normalizedQuery = query.trim().toLowerCase();
-
-    return templates.filter((template) => {
-      const category = template.category.toLowerCase();
-      const matchesFilter =
-        filter === "All" || category.includes(filter.toLowerCase());
+    const q = query.trim().toLowerCase();
+    return templates.filter((t) => {
+      const cat = t.category.toLowerCase();
+      const matchesFilter = filter === "All" || cat === filter.toLowerCase();
       const matchesQuery =
-        !normalizedQuery ||
-        [template.title, template.category, template.description]
-          .join(" ")
-          .toLowerCase()
-          .includes(normalizedQuery);
-
+        !q || [t.title, t.category, t.description, t.difficulty].join(" ").toLowerCase().includes(q);
       return matchesFilter && matchesQuery;
     });
   }, [filter, query, templates]);
 
+  const categoryCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const t of templates) {
+      const cat = t.category;
+      counts[cat] = (counts[cat] || 0) + 1;
+    }
+    return counts;
+  }, [templates]);
+
   const handleStart = async (templateId: string) => {
     setStartingId(templateId);
-
     try {
       const result = await startLab(templateId);
       toast({
@@ -116,42 +135,55 @@ export default function CatalogPage() {
     <div className="space-y-6">
       <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div>
-          <h1 className="text-3xl text-foreground">Lab Catalog</h1>
-          <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-            Browse provisionable AWS lab templates. Each launch uses the existing backend `/labs/start` contract.
+          <h1 className="text-2xl font-semibold tracking-tight text-foreground">Lab Catalog</h1>
+          <p className="mt-1 max-w-xl text-[13px] text-muted-foreground">
+            {templates.length} lab {templates.length === 1 ? "template" : "templates"} across{" "}
+            {Object.keys(categoryCounts).length} categories. Pick one and launch.
           </p>
         </div>
-        <div className="relative w-full lg:w-80">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+        <div className="relative w-full lg:w-72">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground/50" />
           <Input
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search labs"
-            className="pl-9"
+            placeholder="Search labs..."
+            className="h-9 pl-9 text-[13px]"
           />
         </div>
       </header>
 
-      <div className="flex gap-2 overflow-x-auto pb-1">
-        {filters.map((item) => (
-          <button
-            key={item}
-            type="button"
-            onClick={() => setFilter(item)}
-            className={cn(
-              "shrink-0 rounded-full border px-3 py-1.5 text-sm",
-              filter === item
-                ? "border-primary bg-primary/10 text-indigo-200"
-                : "border-border bg-card text-muted-foreground hover:text-foreground"
-            )}
-          >
-            {item}
-          </button>
-        ))}
+      {/* filter tabs */}
+      <div className="flex gap-1.5 overflow-x-auto pb-1">
+        {filters.map(({ label, icon: Icon }) => {
+          const isActive = filter === label;
+          const count = label === "All" ? templates.length : (categoryCounts[label] ?? 0);
+          return (
+            <button
+              key={label}
+              type="button"
+              onClick={() => setFilter(label)}
+              className={cn(
+                "flex shrink-0 items-center gap-1.5 rounded-lg border px-3 py-1.5 text-[13px] font-medium transition",
+                isActive
+                  ? "border-primary/30 bg-primary/10 text-primary"
+                  : "border-transparent bg-secondary/60 text-muted-foreground hover:bg-secondary hover:text-foreground"
+              )}
+            >
+              <Icon className="h-3.5 w-3.5" />
+              {label}
+              <span className={cn(
+                "ml-0.5 min-w-[18px] rounded-full px-1.5 py-px text-[10px] font-medium",
+                isActive ? "bg-primary/15 text-primary" : "bg-muted text-muted-foreground/60"
+              )}>
+                {count}
+              </span>
+            </button>
+          );
+        })}
       </div>
 
       {errorMessage ? (
-        <div className="rounded-lg border border-destructive/35 bg-destructive/10 px-4 py-3 text-sm text-red-300">
+        <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-[13px] text-destructive">
           {errorMessage}
           <Button type="button" variant="ghost" size="sm" className="ml-2" onClick={loadCatalog}>
             Retry
@@ -159,7 +191,7 @@ export default function CatalogPage() {
         </div>
       ) : null}
 
-      {!isAuthReady || !tokens?.access_token || isLoading ? (
+      {isLoading ? (
         <CatalogSkeleton />
       ) : filteredTemplates.length ? (
         <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
@@ -174,9 +206,9 @@ export default function CatalogPage() {
         </section>
       ) : (
         <EmptyState
-          icon={Boxes}
-          title="No labs match this view"
-          description="Try another category or search term. If the API is unavailable, the catalog will remain empty without breaking the page."
+          icon={ShieldAlert}
+          title="No labs match"
+          description="Try a different category or search term."
         />
       )}
     </div>
