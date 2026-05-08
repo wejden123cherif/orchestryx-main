@@ -17,6 +17,12 @@ WORKER_REPO="orchestryx-worker"
 SECRET_NAME="orchestryx/api/env"
 SECRET_ARN="arn:aws:secretsmanager:${AWS_REGION}:${AWS_ACCOUNT_ID}:secret:orchestryx/api/env-J7WB6D"
 AURORA_ENDPOINT="orchestryx-db.cluster-cz86ciucmlhr.eu-central-1.rds.amazonaws.com"
+AURORA_CLUSTER="orchestryx-db"
+AURORA_INSTANCE="orchestryx-db-writer"
+AURORA_DB_NAME="orchestryx"
+AURORA_SUBNET_GROUP="orchestryx-db-subnets"
+AURORA_MIN_CAPACITY="0.5"
+AURORA_MAX_CAPACITY="2"
 
 EXECUTION_ROLE="orchestryx-ecs-execution-role"
 API_TASK_ROLE="orchestryx-api-task-role"
@@ -27,14 +33,20 @@ WORKER_TASK_FILE="scripts/aws/task-definitions/worker-task.json"
 
 API_SG_NAME="orchestryx-api-sg"
 WORKER_SG_NAME="orchestryx-worker-sg"
+ALB_SG_NAME="orchestryx-alb-sg"
 API_SG_ID="sg-0205b75f583ebfa25"
 WORKER_SG_ID="sg-0db089ffb994e8272"
+ALB_SG_ID=""
 AURORA_SG_ID="sg-0088ffc271e2fa353"
 
 API_LOG_GROUP="/ecs/orchestryx-api"
 WORKER_LOG_GROUP="/ecs/orchestryx-worker"
 API_SERVICE="orchestryx-api-service"
 WORKER_SERVICE="orchestryx-worker-service"
+ALB_NAME="orchestryx-api-alb"
+TARGET_GROUP_NAME="orchestryx-api-tg"
+API_CONTAINER_NAME="orchestryx-api"
+API_CONTAINER_PORT="8000"
 
 require_command() {
   command -v "$1" >/dev/null 2>&1 || {
@@ -113,11 +125,13 @@ discover_or_create_sg() {
   local description="$3"
   local discovered_id
 
-  if aws ec2 describe-security-groups \
-    --group-ids "${desired_id}" \
-    --region "${AWS_REGION}" >/dev/null 2>&1; then
-    echo "${desired_id}"
-    return
+  if [[ -n "${desired_id}" ]]; then
+    if aws ec2 describe-security-groups \
+      --group-ids "${desired_id}" \
+      --region "${AWS_REGION}" >/dev/null 2>&1; then
+      echo "${desired_id}"
+      return
+    fi
   fi
 
   discovered_id="$(aws ec2 describe-security-groups \
@@ -165,6 +179,103 @@ authorize_ingress_cidr() {
     echo "${output}" >&2
     exit ${status}
   fi
+}
+
+ensure_target_group() {
+  local target_group_arn
+
+  set +e
+  target_group_arn="$(aws elbv2 describe-target-groups \
+    --names "${TARGET_GROUP_NAME}" \
+    --region "${AWS_REGION}" \
+    --query "TargetGroups[0].TargetGroupArn" \
+    --output text 2>/dev/null)"
+  local status=$?
+  set -e
+
+  if [[ ${status} -eq 0 && "${target_group_arn}" != "None" && -n "${target_group_arn}" ]]; then
+    echo "${target_group_arn}"
+    return
+  fi
+
+  aws elbv2 create-target-group \
+    --name "${TARGET_GROUP_NAME}" \
+    --protocol HTTP \
+    --port "${API_CONTAINER_PORT}" \
+    --vpc-id "${VPC_ID}" \
+    --target-type ip \
+    --health-check-protocol HTTP \
+    --health-check-path /health \
+    --health-check-interval-seconds 30 \
+    --health-check-timeout-seconds 5 \
+    --healthy-threshold-count 2 \
+    --unhealthy-threshold-count 3 \
+    --matcher HttpCode=200 \
+    --region "${AWS_REGION}" \
+    --query "TargetGroups[0].TargetGroupArn" \
+    --output text
+}
+
+ensure_load_balancer() {
+  local alb_arn
+
+  set +e
+  alb_arn="$(aws elbv2 describe-load-balancers \
+    --names "${ALB_NAME}" \
+    --region "${AWS_REGION}" \
+    --query "LoadBalancers[0].LoadBalancerArn" \
+    --output text 2>/dev/null)"
+  local status=$?
+  set -e
+
+  if [[ ${status} -eq 0 && "${alb_arn}" != "None" && -n "${alb_arn}" ]]; then
+    echo "${alb_arn}"
+    return
+  fi
+
+  aws elbv2 create-load-balancer \
+    --name "${ALB_NAME}" \
+    --type application \
+    --scheme internet-facing \
+    --ip-address-type ipv4 \
+    --security-groups "${ALB_SG_ID}" \
+    --subnets "${SUBNETS[0]}" "${SUBNETS[1]}" \
+    --region "${AWS_REGION}" \
+    --query "LoadBalancers[0].LoadBalancerArn" \
+    --output text
+}
+
+ensure_http_listener() {
+  local alb_arn="$1"
+  local target_group_arn="$2"
+  local listener_arn
+
+  listener_arn="$(aws elbv2 describe-listeners \
+    --load-balancer-arn "${alb_arn}" \
+    --region "${AWS_REGION}" \
+    --query "Listeners[?Port==\`80\`].ListenerArn | [0]" \
+    --output text)"
+
+  if [[ "${listener_arn}" != "None" && -n "${listener_arn}" ]]; then
+    echo "ALB HTTP listener already exists."
+    return
+  fi
+
+  aws elbv2 create-listener \
+    --load-balancer-arn "${alb_arn}" \
+    --protocol HTTP \
+    --port 80 \
+    --default-actions "Type=forward,TargetGroupArn=${target_group_arn}" \
+    --region "${AWS_REGION}" >/dev/null
+  echo "Created ALB HTTP listener on port 80."
+}
+
+get_alb_dns_name() {
+  aws elbv2 describe-load-balancers \
+    --names "${ALB_NAME}" \
+    --region "${AWS_REGION}" \
+    --query "LoadBalancers[0].DNSName" \
+    --output text
 }
 
 authorize_ingress_source_sg() {
@@ -277,6 +388,105 @@ PY
   echo "Created secret ${SECRET_NAME}."
 }
 
+read_database_credentials() {
+  aws secretsmanager get-secret-value \
+    --secret-id "${SECRET_NAME}" \
+    --region "${AWS_REGION}" \
+    --query SecretString \
+    --output text |
+    python -c 'import json, sys, urllib.parse
+secret = json.load(sys.stdin)
+url = urllib.parse.urlparse(secret["DATABASE_URL"])
+print(urllib.parse.unquote(url.username or ""))
+print(urllib.parse.unquote(url.password or ""))
+print((url.path or "/orchestryx").lstrip("/") or "orchestryx")'
+}
+
+ensure_db_subnet_group() {
+  if aws rds describe-db-subnet-groups \
+    --db-subnet-group-name "${AURORA_SUBNET_GROUP}" \
+    --region "${AWS_REGION}" >/dev/null 2>&1; then
+    echo "DB subnet group ${AURORA_SUBNET_GROUP} already exists; skipping."
+    return
+  fi
+
+  aws rds create-db-subnet-group \
+    --db-subnet-group-name "${AURORA_SUBNET_GROUP}" \
+    --db-subnet-group-description "Orchestryx Aurora subnet group" \
+    --subnet-ids "${SUBNETS[@]}" \
+    --region "${AWS_REGION}" >/dev/null
+  echo "Created DB subnet group ${AURORA_SUBNET_GROUP}."
+}
+
+cluster_exists() {
+  aws rds describe-db-clusters \
+    --db-cluster-identifier "${AURORA_CLUSTER}" \
+    --region "${AWS_REGION}" >/dev/null 2>&1
+}
+
+db_instance_exists() {
+  aws rds describe-db-instances \
+    --db-instance-identifier "${AURORA_INSTANCE}" \
+    --region "${AWS_REGION}" >/dev/null 2>&1
+}
+
+ensure_aurora_database() {
+  local db_config
+  local db_user
+  local db_password
+  local db_name
+  db_config="$(read_database_credentials)"
+  db_user="$(printf '%s\n' "${db_config}" | sed -n '1p')"
+  db_password="$(printf '%s\n' "${db_config}" | sed -n '2p')"
+  db_name="$(printf '%s\n' "${db_config}" | sed -n '3p')"
+  db_name="${db_name:-${AURORA_DB_NAME}}"
+
+  if [[ -z "${db_user}" || -z "${db_password}" ]]; then
+    echo "DATABASE_URL in ${SECRET_NAME} must include a database username and password." >&2
+    exit 1
+  fi
+
+  ensure_db_subnet_group
+
+  if cluster_exists; then
+    echo "Aurora cluster ${AURORA_CLUSTER} already exists; skipping create."
+  else
+    aws rds create-db-cluster \
+      --db-cluster-identifier "${AURORA_CLUSTER}" \
+      --engine aurora-postgresql \
+      --engine-mode provisioned \
+      --database-name "${db_name}" \
+      --master-username "${db_user}" \
+      --master-user-password "${db_password}" \
+      --db-subnet-group-name "${AURORA_SUBNET_GROUP}" \
+      --vpc-security-group-ids "${AURORA_SG_ID}" \
+      --serverless-v2-scaling-configuration "MinCapacity=${AURORA_MIN_CAPACITY},MaxCapacity=${AURORA_MAX_CAPACITY}" \
+      --backup-retention-period 7 \
+      --deletion-protection \
+      --region "${AWS_REGION}" >/dev/null
+    echo "Created Aurora cluster ${AURORA_CLUSTER}."
+  fi
+
+  if db_instance_exists; then
+    echo "Aurora writer instance ${AURORA_INSTANCE} already exists; skipping create."
+  else
+    aws rds create-db-instance \
+      --db-instance-identifier "${AURORA_INSTANCE}" \
+      --db-cluster-identifier "${AURORA_CLUSTER}" \
+      --engine aurora-postgresql \
+      --db-instance-class db.serverless \
+      --no-publicly-accessible \
+      --region "${AWS_REGION}" >/dev/null
+    echo "Created Aurora writer instance ${AURORA_INSTANCE}."
+  fi
+
+  echo "Waiting for Aurora writer instance to become available..."
+  aws rds wait db-instance-available \
+    --db-instance-identifier "${AURORA_INSTANCE}" \
+    --region "${AWS_REGION}"
+  echo "Aurora is available at ${AURORA_ENDPOINT}."
+}
+
 task_definition_exists() {
   aws ecs describe-task-definition \
     --task-definition "$1" \
@@ -312,9 +522,28 @@ ensure_service() {
   local service_name="$1"
   local task_definition="$2"
   local security_group="$3"
+  local target_group_arn="${4:-}"
+  local load_balancer_args=()
+
+  if [[ -n "${target_group_arn}" ]]; then
+    load_balancer_args=(
+      --load-balancers "targetGroupArn=${target_group_arn},containerName=${API_CONTAINER_NAME},containerPort=${API_CONTAINER_PORT}"
+      --health-check-grace-period-seconds 60
+    )
+  fi
 
   if service_exists "${service_name}"; then
-    echo "ECS service ${service_name} already exists; skipping create."
+    if [[ -z "${target_group_arn}" ]]; then
+      echo "ECS service ${service_name} already exists; skipping create."
+      return
+    fi
+
+    echo "ECS service ${service_name} already exists; ensuring latest load balancer settings."
+    aws ecs update-service \
+      --cluster "${ECS_CLUSTER}" \
+      --service "${service_name}" \
+      "${load_balancer_args[@]}" \
+      --region "${AWS_REGION}" >/dev/null
   else
     aws ecs create-service \
       --cluster "${ECS_CLUSTER}" \
@@ -323,6 +552,7 @@ ensure_service() {
       --desired-count 1 \
       --launch-type FARGATE \
       --network-configuration "awsvpcConfiguration={subnets=[${SUBNETS[0]},${SUBNETS[1]}],securityGroups=[${security_group}],assignPublicIp=ENABLED}" \
+      "${load_balancer_args[@]}" \
       --region "${AWS_REGION}" >/dev/null
     echo "Created ECS service ${service_name}."
   fi
@@ -358,11 +588,21 @@ ensure_policy_attached "${WORKER_TASK_ROLE}" "arn:aws:iam::aws:policy/CloudWatch
 section "Security groups"
 API_SG_ID="$(discover_or_create_sg "${API_SG_ID}" "${API_SG_NAME}" "Orchestryx API")"
 WORKER_SG_ID="$(discover_or_create_sg "${WORKER_SG_ID}" "${WORKER_SG_NAME}" "Orchestryx worker")"
+ALB_SG_ID="$(discover_or_create_sg "${ALB_SG_ID}" "${ALB_SG_NAME}" "Orchestryx public API load balancer")"
 echo "Using API security group ${API_SG_ID}."
 echo "Using worker security group ${WORKER_SG_ID}."
-authorize_ingress_cidr "${API_SG_ID}" tcp 8000 "0.0.0.0/0"
+echo "Using ALB security group ${ALB_SG_ID}."
+authorize_ingress_cidr "${ALB_SG_ID}" tcp 80 "0.0.0.0/0"
+authorize_ingress_source_sg "${API_SG_ID}" "${ALB_SG_ID}" tcp 8000
 authorize_ingress_source_sg "${AURORA_SG_ID}" "${API_SG_ID}" tcp 5432
 authorize_ingress_source_sg "${AURORA_SG_ID}" "${WORKER_SG_ID}" tcp 5432
+
+section "Application Load Balancer"
+TARGET_GROUP_ARN="$(ensure_target_group)"
+ALB_ARN="$(ensure_load_balancer)"
+ensure_http_listener "${ALB_ARN}" "${TARGET_GROUP_ARN}"
+ALB_DNS_NAME="$(get_alb_dns_name)"
+echo "ALB URL: http://${ALB_DNS_NAME}"
 
 section "CloudWatch log groups"
 ensure_log_group "${API_LOG_GROUP}"
@@ -371,14 +611,18 @@ ensure_log_group "${WORKER_LOG_GROUP}"
 section "Secrets Manager"
 ensure_secret
 
+section "Aurora PostgreSQL"
+ensure_aurora_database
+
 section "ECS task definitions"
 ensure_task_definition "orchestryx-api" "${API_TASK_FILE}"
 ensure_task_definition "orchestryx-worker" "${WORKER_TASK_FILE}"
 
 section "ECS services"
-ensure_service "${API_SERVICE}" "orchestryx-api" "${API_SG_ID}"
+ensure_service "${API_SERVICE}" "orchestryx-api" "${API_SG_ID}" "${TARGET_GROUP_ARN}"
 ensure_service "${WORKER_SERVICE}" "orchestryx-worker" "${WORKER_SG_ID}"
 
 echo
 echo "AWS setup complete."
+echo "Public API URL: http://${ALB_DNS_NAME}"
 echo "Documented secret ARN for existing environment: ${SECRET_ARN}"

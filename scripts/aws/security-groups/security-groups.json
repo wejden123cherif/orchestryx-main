@@ -2,6 +2,19 @@
   "vpcId": "vpc-0d10f5a5902d4ffd4",
   "securityGroups": [
     {
+      "name": "orchestryx-alb-sg",
+      "id": "",
+      "description": "Public Application Load Balancer for the Orchestryx API",
+      "ingress": [
+        {
+          "protocol": "tcp",
+          "port": 80,
+          "source": "0.0.0.0/0",
+          "purpose": "Public HTTP entry point for the API load balancer."
+        }
+      ]
+    },
+    {
       "name": "orchestryx-api-sg",
       "id": "sg-0205b75f583ebfa25",
       "description": "Orchestryx API ECS tasks",
@@ -9,8 +22,8 @@
         {
           "protocol": "tcp",
           "port": 8000,
-          "source": "0.0.0.0/0",
-          "purpose": "Temporary direct API access before an Application Load Balancer is added."
+          "sourceSecurityGroupName": "orchestryx-alb-sg",
+          "purpose": "Allow the public ALB to reach API tasks."
         }
       ]
     },

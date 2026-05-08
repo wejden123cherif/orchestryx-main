@@ -21,6 +21,12 @@ $WorkerRepo = "orchestryx-worker"
 $SecretName = "orchestryx/api/env"
 $SecretArn = "arn:aws:secretsmanager:${AwsRegion}:${AwsAccountId}:secret:orchestryx/api/env-J7WB6D"
 $AuroraEndpoint = "orchestryx-db.cluster-cz86ciucmlhr.eu-central-1.rds.amazonaws.com"
+$AuroraCluster = "orchestryx-db"
+$AuroraInstance = "orchestryx-db-writer"
+$AuroraDbName = "orchestryx"
+$AuroraSubnetGroup = "orchestryx-db-subnets"
+$AuroraMinCapacity = "0.5"
+$AuroraMaxCapacity = "2"
 
 $ExecutionRole = "orchestryx-ecs-execution-role"
 $ApiTaskRole = "orchestryx-api-task-role"
@@ -31,14 +37,20 @@ $WorkerTaskFile = "scripts/aws/task-definitions/worker-task.json"
 
 $ApiSgName = "orchestryx-api-sg"
 $WorkerSgName = "orchestryx-worker-sg"
+$AlbSgName = "orchestryx-alb-sg"
 $ApiSgId = "sg-0205b75f583ebfa25"
 $WorkerSgId = "sg-0db089ffb994e8272"
+$AlbSgId = ""
 $AuroraSgId = "sg-0088ffc271e2fa353"
 
 $ApiLogGroup = "/ecs/orchestryx-api"
 $WorkerLogGroup = "/ecs/orchestryx-worker"
 $ApiService = "orchestryx-api-service"
 $WorkerService = "orchestryx-worker-service"
+$AlbName = "orchestryx-api-alb"
+$TargetGroupName = "orchestryx-api-tg"
+$ApiContainerName = "orchestryx-api"
+$ApiContainerPort = 8000
 
 function Assert-Command {
     param([string]$Name)
@@ -127,10 +139,15 @@ function Resolve-OrCreateSecurityGroup {
         [string]$Description
     )
 
+    if (-not [string]::IsNullOrWhiteSpace($DesiredId)) {
+        try {
+            aws ec2 describe-security-groups --group-ids $DesiredId --region $AwsRegion | Out-Null
+            return $DesiredId
+        } catch {
+        }
+    }
+
     try {
-        aws ec2 describe-security-groups --group-ids $DesiredId --region $AwsRegion | Out-Null
-        return $DesiredId
-    } catch {
         $discovered = aws ec2 describe-security-groups `
             --region $AwsRegion `
             --filters "Name=group-name,Values=$Name" "Name=vpc-id,Values=$VpcId" `
@@ -148,7 +165,96 @@ function Resolve-OrCreateSecurityGroup {
             --region $AwsRegion `
             --query "GroupId" `
             --output text
+    } catch {
+        throw
     }
+}
+
+function Ensure-TargetGroup {
+    try {
+        $targetGroupArn = aws elbv2 describe-target-groups `
+            --names $TargetGroupName `
+            --region $AwsRegion `
+            --query "TargetGroups[0].TargetGroupArn" `
+            --output text 2>$null
+        if ($targetGroupArn -and $targetGroupArn -ne "None") {
+            return $targetGroupArn
+        }
+    } catch {
+    }
+
+    return aws elbv2 create-target-group `
+        --name $TargetGroupName `
+        --protocol HTTP `
+        --port $ApiContainerPort `
+        --vpc-id $VpcId `
+        --target-type ip `
+        --health-check-protocol HTTP `
+        --health-check-path /health `
+        --health-check-interval-seconds 30 `
+        --health-check-timeout-seconds 5 `
+        --healthy-threshold-count 2 `
+        --unhealthy-threshold-count 3 `
+        --matcher HttpCode=200 `
+        --region $AwsRegion `
+        --query "TargetGroups[0].TargetGroupArn" `
+        --output text
+}
+
+function Ensure-LoadBalancer {
+    try {
+        $albArn = aws elbv2 describe-load-balancers `
+            --names $AlbName `
+            --region $AwsRegion `
+            --query "LoadBalancers[0].LoadBalancerArn" `
+            --output text 2>$null
+        if ($albArn -and $albArn -ne "None") {
+            return $albArn
+        }
+    } catch {
+    }
+
+    return aws elbv2 create-load-balancer `
+        --name $AlbName `
+        --type application `
+        --scheme internet-facing `
+        --ip-address-type ipv4 `
+        --security-groups $AlbSgId `
+        --subnets $Subnets[0] $Subnets[1] `
+        --region $AwsRegion `
+        --query "LoadBalancers[0].LoadBalancerArn" `
+        --output text
+}
+
+function Ensure-HttpListener {
+    param([string]$AlbArn, [string]$TargetGroupArn)
+
+    $listenerArn = aws elbv2 describe-listeners `
+        --load-balancer-arn $AlbArn `
+        --region $AwsRegion `
+        --query "Listeners[?Port==``80``].ListenerArn | [0]" `
+        --output text
+
+    if ($listenerArn -and $listenerArn -ne "None") {
+        Write-Host "ALB HTTP listener already exists."
+        return
+    }
+
+    aws elbv2 create-listener `
+        --load-balancer-arn $AlbArn `
+        --protocol HTTP `
+        --port 80 `
+        --default-actions "Type=forward,TargetGroupArn=$TargetGroupArn" `
+        --region $AwsRegion | Out-Null
+    Write-Host "Created ALB HTTP listener on port 80."
+}
+
+function Get-AlbDnsName {
+    return aws elbv2 describe-load-balancers `
+        --names $AlbName `
+        --region $AwsRegion `
+        --query "LoadBalancers[0].DNSName" `
+        --output text
 }
 
 function Invoke-IgnoreDuplicateIngress {
@@ -230,6 +336,120 @@ function Ensure-Secret {
     Write-Host "Created secret $SecretName."
 }
 
+function Get-DatabaseConfigFromSecret {
+    $secretString = aws secretsmanager get-secret-value `
+        --secret-id $SecretName `
+        --region $AwsRegion `
+        --query SecretString `
+        --output text
+
+    $secret = $secretString | ConvertFrom-Json
+    $databaseUrl = [Uri]$secret.DATABASE_URL
+    $userInfoParts = $databaseUrl.UserInfo.Split(":", 2)
+    $dbUser = [Uri]::UnescapeDataString($userInfoParts[0])
+    $dbPassword = ""
+    if ($userInfoParts.Count -gt 1) {
+        $dbPassword = [Uri]::UnescapeDataString($userInfoParts[1])
+    }
+    $dbName = $databaseUrl.AbsolutePath.TrimStart("/")
+    if ([string]::IsNullOrWhiteSpace($dbName)) {
+        $dbName = $AuroraDbName
+    }
+
+    if ([string]::IsNullOrWhiteSpace($dbUser) -or [string]::IsNullOrWhiteSpace($dbPassword)) {
+        throw "DATABASE_URL in $SecretName must include a database username and password."
+    }
+
+    return @{
+        Username = $dbUser
+        Password = $dbPassword
+        Database = $dbName
+    }
+}
+
+function Ensure-DbSubnetGroup {
+    try {
+        aws rds describe-db-subnet-groups `
+            --db-subnet-group-name $AuroraSubnetGroup `
+            --region $AwsRegion | Out-Null
+        Write-Host "DB subnet group $AuroraSubnetGroup already exists; skipping."
+        return
+    } catch {
+    }
+
+    aws rds create-db-subnet-group `
+        --db-subnet-group-name $AuroraSubnetGroup `
+        --db-subnet-group-description "Orchestryx Aurora subnet group" `
+        --subnet-ids $Subnets `
+        --region $AwsRegion | Out-Null
+    Write-Host "Created DB subnet group $AuroraSubnetGroup."
+}
+
+function Test-DbCluster {
+    try {
+        aws rds describe-db-clusters `
+            --db-cluster-identifier $AuroraCluster `
+            --region $AwsRegion | Out-Null
+        return $true
+    } catch {
+        return $false
+    }
+}
+
+function Test-DbInstance {
+    try {
+        aws rds describe-db-instances `
+            --db-instance-identifier $AuroraInstance `
+            --region $AwsRegion | Out-Null
+        return $true
+    } catch {
+        return $false
+    }
+}
+
+function Ensure-AuroraDatabase {
+    $dbConfig = Get-DatabaseConfigFromSecret
+    Ensure-DbSubnetGroup
+
+    if (Test-DbCluster) {
+        Write-Host "Aurora cluster $AuroraCluster already exists; skipping create."
+    } else {
+        aws rds create-db-cluster `
+            --db-cluster-identifier $AuroraCluster `
+            --engine aurora-postgresql `
+            --engine-mode provisioned `
+            --database-name $($dbConfig.Database) `
+            --master-username $($dbConfig.Username) `
+            --master-user-password $($dbConfig.Password) `
+            --db-subnet-group-name $AuroraSubnetGroup `
+            --vpc-security-group-ids $AuroraSgId `
+            --serverless-v2-scaling-configuration "MinCapacity=$AuroraMinCapacity,MaxCapacity=$AuroraMaxCapacity" `
+            --backup-retention-period 7 `
+            --deletion-protection `
+            --region $AwsRegion | Out-Null
+        Write-Host "Created Aurora cluster $AuroraCluster."
+    }
+
+    if (Test-DbInstance) {
+        Write-Host "Aurora writer instance $AuroraInstance already exists; skipping create."
+    } else {
+        aws rds create-db-instance `
+            --db-instance-identifier $AuroraInstance `
+            --db-cluster-identifier $AuroraCluster `
+            --engine aurora-postgresql `
+            --db-instance-class db.serverless `
+            --no-publicly-accessible `
+            --region $AwsRegion | Out-Null
+        Write-Host "Created Aurora writer instance $AuroraInstance."
+    }
+
+    Write-Host "Waiting for Aurora writer instance to become available..."
+    aws rds wait db-instance-available `
+        --db-instance-identifier $AuroraInstance `
+        --region $AwsRegion
+    Write-Host "Aurora is available at $AuroraEndpoint."
+}
+
 function Test-TaskDefinition {
     param([string]$Family)
     try {
@@ -262,9 +482,35 @@ function Test-Service {
 }
 
 function Ensure-Service {
-    param([string]$Name, [string]$TaskDefinition, [string]$SecurityGroup)
+    param(
+        [string]$Name,
+        [string]$TaskDefinition,
+        [string]$SecurityGroup,
+        [string]$TargetGroupArn = ""
+    )
+
+    $loadBalancerArgs = @()
+    if (-not [string]::IsNullOrWhiteSpace($TargetGroupArn)) {
+        $loadBalancerArgs = @(
+            "--load-balancers",
+            "targetGroupArn=$TargetGroupArn,containerName=$ApiContainerName,containerPort=$ApiContainerPort",
+            "--health-check-grace-period-seconds",
+            "60"
+        )
+    }
+
     if (Test-Service $Name) {
-        Write-Host "ECS service $Name already exists; skipping create."
+        if ([string]::IsNullOrWhiteSpace($TargetGroupArn)) {
+            Write-Host "ECS service $Name already exists; skipping create."
+            return
+        }
+
+        Write-Host "ECS service $Name already exists; ensuring latest load balancer settings."
+        aws ecs update-service `
+            --cluster $EcsCluster `
+            --service $Name `
+            @loadBalancerArgs `
+            --region $AwsRegion | Out-Null
     } else {
         aws ecs create-service `
             --cluster $EcsCluster `
@@ -273,6 +519,7 @@ function Ensure-Service {
             --desired-count 1 `
             --launch-type FARGATE `
             --network-configuration "awsvpcConfiguration={subnets=[$($Subnets[0]),$($Subnets[1])],securityGroups=[$SecurityGroup],assignPublicIp=ENABLED}" `
+            @loadBalancerArgs `
             --region $AwsRegion | Out-Null
         Write-Host "Created ECS service $Name."
     }
@@ -307,13 +554,20 @@ Ensure-PolicyAttached $WorkerTaskRole "arn:aws:iam::aws:policy/CloudWatchFullAcc
 Write-Section "Security groups"
 $ApiSgId = Resolve-OrCreateSecurityGroup $ApiSgId $ApiSgName "Orchestryx API"
 $WorkerSgId = Resolve-OrCreateSecurityGroup $WorkerSgId $WorkerSgName "Orchestryx worker"
+$AlbSgId = Resolve-OrCreateSecurityGroup $AlbSgId $AlbSgName "Orchestryx public API load balancer"
 Write-Host "Using API security group $ApiSgId."
 Write-Host "Using worker security group $WorkerSgId."
+Write-Host "Using ALB security group $AlbSgId."
 
 Invoke-IgnoreDuplicateIngress `
-    -Command { aws ec2 authorize-security-group-ingress --group-id $ApiSgId --protocol tcp --port 8000 --cidr "0.0.0.0/0" --region $AwsRegion } `
-    -SuccessMessage "Added API ingress tcp:8000 from 0.0.0.0/0." `
-    -DuplicateMessage "API ingress tcp:8000 already exists; skipping."
+    -Command { aws ec2 authorize-security-group-ingress --group-id $AlbSgId --protocol tcp --port 80 --cidr "0.0.0.0/0" --region $AwsRegion } `
+    -SuccessMessage "Added ALB ingress tcp:80 from 0.0.0.0/0." `
+    -DuplicateMessage "ALB ingress tcp:80 already exists; skipping."
+
+Invoke-IgnoreDuplicateIngress `
+    -Command { aws ec2 authorize-security-group-ingress --group-id $ApiSgId --protocol tcp --port 8000 --source-group $AlbSgId --region $AwsRegion } `
+    -SuccessMessage "Allowed ALB security group to reach API tasks on tcp:8000." `
+    -DuplicateMessage "API ingress from ALB security group already exists; skipping."
 
 Invoke-IgnoreDuplicateIngress `
     -Command { aws ec2 authorize-security-group-ingress --group-id $AuroraSgId --protocol tcp --port 5432 --source-group $ApiSgId --region $AwsRegion } `
@@ -325,6 +579,13 @@ Invoke-IgnoreDuplicateIngress `
     -SuccessMessage "Allowed worker security group to reach Aurora on tcp:5432." `
     -DuplicateMessage "Aurora ingress from worker security group already exists; skipping."
 
+Write-Section "Application Load Balancer"
+$TargetGroupArn = Ensure-TargetGroup
+$AlbArn = Ensure-LoadBalancer
+Ensure-HttpListener $AlbArn $TargetGroupArn
+$AlbDnsName = Get-AlbDnsName
+Write-Host "ALB URL: http://$AlbDnsName"
+
 Write-Section "CloudWatch log groups"
 Ensure-LogGroup $ApiLogGroup
 Ensure-LogGroup $WorkerLogGroup
@@ -332,14 +593,18 @@ Ensure-LogGroup $WorkerLogGroup
 Write-Section "Secrets Manager"
 Ensure-Secret
 
+Write-Section "Aurora PostgreSQL"
+Ensure-AuroraDatabase
+
 Write-Section "ECS task definitions"
 Ensure-TaskDefinition "orchestryx-api" $ApiTaskFile
 Ensure-TaskDefinition "orchestryx-worker" $WorkerTaskFile
 
 Write-Section "ECS services"
-Ensure-Service $ApiService "orchestryx-api" $ApiSgId
+Ensure-Service $ApiService "orchestryx-api" $ApiSgId $TargetGroupArn
 Ensure-Service $WorkerService "orchestryx-worker" $WorkerSgId
 
 Write-Host ""
 Write-Host "AWS setup complete."
+Write-Host "Public API URL: http://$AlbDnsName"
 Write-Host "Documented secret ARN for existing environment: $SecretArn"

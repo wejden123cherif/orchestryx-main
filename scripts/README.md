@@ -10,8 +10,8 @@ Current contents:
 
 OS-specific scripts:
 
-- `linux/deploy.sh`: builds API and worker images, pushes them to ECR, and forces ECS redeployments.
-- `linux/setup-aws.sh`: idempotent one-time AWS setup script for Bash environments.
+- `linux/deploy.sh`: builds API and worker images, pushes them to ECR, forces ECS redeployments, and prints the ALB URL when present.
+- `linux/setup-aws.sh`: idempotent one-time AWS setup script for Bash environments, including the public API ALB.
 - `windows/deploy.ps1`: PowerShell equivalent of the Bash deploy script.
 - `windows/setup-aws.ps1`: PowerShell equivalent of the Bash setup script.
 
@@ -22,6 +22,7 @@ AWS asset folders:
 - `aws/security-groups/`: security group IDs and ingress rule documentation.
 - `aws/ecs/`: ECS service network configuration and task family references.
 - `aws/ecr/`: ECR repository inventory.
+- `aws/rds/`: Aurora PostgreSQL database inventory.
 - `aws/logs/`: CloudWatch log group inventory.
 - `aws/secrets/`: Secrets Manager metadata without committed secret values.
 

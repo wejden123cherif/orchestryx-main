@@ -26,6 +26,7 @@ $ApiService = "orchestryx-api-service"
 $WorkerService = "orchestryx-worker-service"
 $ApiTaskRole = "orchestryx-api-task-role"
 $ApiSqsPolicyArn = "arn:aws:iam::aws:policy/AmazonSQSFullAccess"
+$AlbName = "orchestryx-api-alb"
 
 function Assert-Command {
     param([string]$Name)
@@ -95,6 +96,24 @@ function Deploy-Worker {
         --region $AwsRegion | Out-Null
 }
 
+function Write-ApiUrl {
+    try {
+        $albDnsName = aws elbv2 describe-load-balancers `
+            --names $AlbName `
+            --region $AwsRegion `
+            --query "LoadBalancers[0].DNSName" `
+            --output text 2>$null
+
+        if ($albDnsName -and $albDnsName -ne "None") {
+            Write-Host "Public API URL: http://$albDnsName"
+            return
+        }
+    } catch {
+    }
+
+    Write-Host "No ALB found yet. Run .\scripts\windows\setup-aws.ps1 to create the public API URL."
+}
+
 Assert-Command aws
 Assert-Command docker
 
@@ -110,3 +129,4 @@ switch ($Target) {
 }
 
 Write-Host "Deployment complete."
+Write-ApiUrl

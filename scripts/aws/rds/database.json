@@ -1,0 +1,38 @@
+{
+  "region": "eu-central-1",
+  "cluster": {
+    "identifier": "orchestryx-db",
+    "engine": "aurora-postgresql",
+    "engineMode": "provisioned",
+    "databaseName": "orchestryx",
+    "endpoint": "orchestryx-db.cluster-cz86ciucmlhr.eu-central-1.rds.amazonaws.com",
+    "deletionProtection": true,
+    "backupRetentionDays": 7,
+    "serverlessV2Scaling": {
+      "minCapacity": 0.5,
+      "maxCapacity": 2
+    }
+  },
+  "writerInstance": {
+    "identifier": "orchestryx-db-writer",
+    "instanceClass": "db.serverless",
+    "publiclyAccessible": false
+  },
+  "subnetGroup": {
+    "name": "orchestryx-db-subnets",
+    "subnets": [
+      "subnet-09b0a64b46e90bf03",
+      "subnet-0f3460c06ddf5ecc9",
+      "subnet-0ff556deb9702ca2a"
+    ]
+  },
+  "securityGroups": [
+    "sg-0088ffc271e2fa353"
+  ],
+  "credentialsSource": {
+    "secretName": "orchestryx/api/env",
+    "databaseUrlKey": "DATABASE_URL",
+    "containsSecretValues": true,
+    "valuesAreCommittedToRepo": false
+  }
+}

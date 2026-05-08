@@ -12,6 +12,30 @@ This document is the team reference for the AWS infrastructure used to run Orche
 | Subnets | `subnet-09b0a64b46e90bf03`, `subnet-0f3460c06ddf5ecc9`, `subnet-0ff556deb9702ca2a` |
 | Aurora endpoint | `orchestryx-db.cluster-cz86ciucmlhr.eu-central-1.rds.amazonaws.com` |
 
+## Database
+
+| Resource | Value |
+|---|---|
+| Engine | Aurora PostgreSQL Serverless v2 |
+| Cluster | `orchestryx-db` |
+| Writer instance | `orchestryx-db-writer` |
+| Database name | `orchestryx` |
+| DB subnet group | `orchestryx-db-subnets` |
+| Min ACU | `0.5` |
+| Max ACU | `2` |
+| Deletion protection | Enabled |
+| Backup retention | `7` days |
+
+The setup scripts create the DB subnet group, Aurora cluster, and serverless writer instance when they are missing. The database username, password, and database name are read from the `DATABASE_URL` key in Secrets Manager secret `orchestryx/api/env`; the scripts do not print or commit the credential values.
+
+Already-created commands:
+
+```bash
+aws rds create-db-subnet-group --db-subnet-group-name orchestryx-db-subnets --db-subnet-group-description "Orchestryx Aurora subnet group" --subnet-ids subnet-09b0a64b46e90bf03 subnet-0f3460c06ddf5ecc9 subnet-0ff556deb9702ca2a --region eu-central-1
+aws rds create-db-cluster --db-cluster-identifier orchestryx-db --engine aurora-postgresql --engine-mode provisioned --database-name orchestryx --master-username <secret-user> --master-user-password <secret-password> --db-subnet-group-name orchestryx-db-subnets --vpc-security-group-ids sg-0088ffc271e2fa353 --serverless-v2-scaling-configuration MinCapacity=0.5,MaxCapacity=2 --backup-retention-period 7 --deletion-protection --region eu-central-1
+aws rds create-db-instance --db-instance-identifier orchestryx-db-writer --db-cluster-identifier orchestryx-db --engine aurora-postgresql --db-instance-class db.serverless --no-publicly-accessible --region eu-central-1
+```
+
 ## Container Registry
 
 | Repository | URI |
@@ -35,11 +59,13 @@ aws ecr create-repository --repository-name orchestryx-worker --region eu-centra
 | Worker task definition | `orchestryx-worker:1` |
 | API service | `orchestryx-api-service` |
 | Worker service | `orchestryx-worker-service` |
+| API load balancer | `orchestryx-api-alb` |
+| API target group | `orchestryx-api-tg` |
 | Launch type | `FARGATE` |
 | API desired count | `1` |
 | Worker desired count | `1` |
 
-The API service is public for now because its awsvpc network config assigns a public IP and allows inbound TCP `8000` through `sg-0205b75f583ebfa25`. The worker service has no public listener; it consumes SQS.
+The API service is exposed through an internet-facing Application Load Balancer. The ALB listens on HTTP `80`, forwards to the API target group on container port `8000`, and checks `/health`. The worker service has no public listener; it consumes SQS.
 
 Already-created commands:
 
@@ -49,7 +75,11 @@ aws ecs create-cluster --cluster-name orchestryx --region eu-central-1
 aws ecs register-task-definition --region eu-central-1 --cli-input-json file://scripts/aws/task-definitions/api-task.json
 aws ecs register-task-definition --region eu-central-1 --cli-input-json file://scripts/aws/task-definitions/worker-task.json
 
-aws ecs create-service --cluster orchestryx --service-name orchestryx-api-service --task-definition orchestryx-api --desired-count 1 --launch-type FARGATE --network-configuration "awsvpcConfiguration={subnets=[subnet-09b0a64b46e90bf03,subnet-0f3460c06ddf5ecc9],securityGroups=[sg-0205b75f583ebfa25],assignPublicIp=ENABLED}" --region eu-central-1
+aws elbv2 create-load-balancer --name orchestryx-api-alb --type application --scheme internet-facing --security-groups <alb-sg-id> --subnets subnet-09b0a64b46e90bf03 subnet-0f3460c06ddf5ecc9 --region eu-central-1
+aws elbv2 create-target-group --name orchestryx-api-tg --protocol HTTP --port 8000 --vpc-id vpc-0d10f5a5902d4ffd4 --target-type ip --health-check-path /health --region eu-central-1
+aws elbv2 create-listener --load-balancer-arn <alb-arn> --protocol HTTP --port 80 --default-actions Type=forward,TargetGroupArn=<target-group-arn> --region eu-central-1
+
+aws ecs create-service --cluster orchestryx --service-name orchestryx-api-service --task-definition orchestryx-api --desired-count 1 --launch-type FARGATE --network-configuration "awsvpcConfiguration={subnets=[subnet-09b0a64b46e90bf03,subnet-0f3460c06ddf5ecc9],securityGroups=[sg-0205b75f583ebfa25],assignPublicIp=ENABLED}" --load-balancers "targetGroupArn=<target-group-arn>,containerName=orchestryx-api,containerPort=8000" --health-check-grace-period-seconds 60 --region eu-central-1
 aws ecs create-service --cluster orchestryx --service-name orchestryx-worker-service --task-definition orchestryx-worker --desired-count 1 --launch-type FARGATE --network-configuration "awsvpcConfiguration={subnets=[subnet-09b0a64b46e90bf03,subnet-0f3460c06ddf5ecc9],securityGroups=[sg-0db089ffb994e8272],assignPublicIp=ENABLED}" --region eu-central-1
 ```
 
@@ -127,7 +157,8 @@ Future hardening: replace broad managed policies with least-privilege custom pol
 
 | Security group | ID | Purpose |
 |---|---|---|
-| API SG | `sg-0205b75f583ebfa25` | Allows public API traffic to container port `8000` |
+| ALB SG | created/discovered as `orchestryx-alb-sg` | Allows public HTTP traffic to the API ALB |
+| API SG | `sg-0205b75f583ebfa25` | Allows ALB traffic to API container port `8000` |
 | Worker SG | `sg-0db089ffb994e8272` | Worker task network identity |
 | Aurora SG | `sg-0088ffc271e2fa353` | Aurora database access control |
 
@@ -135,7 +166,8 @@ Rules:
 
 | Target SG | Source | Protocol | Port | Purpose |
 |---|---|---|---:|---|
-| `sg-0205b75f583ebfa25` | `0.0.0.0/0` | TCP | `8000` | Public API access |
+| `orchestryx-alb-sg` | `0.0.0.0/0` | TCP | `80` | Public API access |
+| `sg-0205b75f583ebfa25` | `orchestryx-alb-sg` | TCP | `8000` | ALB to API tasks |
 | `sg-0088ffc271e2fa353` | `sg-0205b75f583ebfa25` | TCP | `5432` | API to Aurora |
 | `sg-0088ffc271e2fa353` | `sg-0db089ffb994e8272` | TCP | `5432` | Worker to Aurora |
 
@@ -144,7 +176,9 @@ Already-created commands:
 ```bash
 aws ec2 create-security-group --group-name orchestryx-api-sg --description "Orchestryx API" --vpc-id vpc-0d10f5a5902d4ffd4
 aws ec2 create-security-group --group-name orchestryx-worker-sg --description "Orchestryx worker" --vpc-id vpc-0d10f5a5902d4ffd4
-aws ec2 authorize-security-group-ingress --group-id sg-0205b75f583ebfa25 --protocol tcp --port 8000 --cidr 0.0.0.0/0
+aws ec2 create-security-group --group-name orchestryx-alb-sg --description "Orchestryx public API load balancer" --vpc-id vpc-0d10f5a5902d4ffd4
+aws ec2 authorize-security-group-ingress --group-id <alb-sg-id> --protocol tcp --port 80 --cidr 0.0.0.0/0
+aws ec2 authorize-security-group-ingress --group-id sg-0205b75f583ebfa25 --protocol tcp --port 8000 --source-group <alb-sg-id>
 aws ec2 authorize-security-group-ingress --group-id sg-0088ffc271e2fa353 --protocol tcp --port 5432 --source-group sg-0205b75f583ebfa25
 aws ec2 authorize-security-group-ingress --group-id sg-0088ffc271e2fa353 --protocol tcp --port 5432 --source-group sg-0db089ffb994e8272
 ```

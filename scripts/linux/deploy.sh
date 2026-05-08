@@ -16,6 +16,7 @@ API_SERVICE="orchestryx-api-service"
 WORKER_SERVICE="orchestryx-worker-service"
 API_TASK_ROLE="orchestryx-api-task-role"
 API_SQS_POLICY_ARN="arn:aws:iam::aws:policy/AmazonSQSFullAccess"
+ALB_NAME="orchestryx-api-alb"
 
 TARGET="${1:-all}"
 
@@ -94,6 +95,22 @@ deploy_worker() {
     --region "${AWS_REGION}" >/dev/null
 }
 
+print_api_url() {
+  local alb_dns_name
+
+  alb_dns_name="$(aws elbv2 describe-load-balancers \
+    --names "${ALB_NAME}" \
+    --region "${AWS_REGION}" \
+    --query "LoadBalancers[0].DNSName" \
+    --output text 2>/dev/null || true)"
+
+  if [[ -n "${alb_dns_name}" && "${alb_dns_name}" != "None" ]]; then
+    echo "Public API URL: http://${alb_dns_name}"
+  else
+    echo "No ALB found yet. Run ./scripts/linux/setup-aws.sh to create the public API URL."
+  fi
+}
+
 require_command aws
 require_command docker
 
@@ -113,3 +130,4 @@ case "${TARGET}" in
 esac
 
 echo "Deployment complete."
+print_api_url
