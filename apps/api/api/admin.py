@@ -5,7 +5,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Path
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, StringConstraints
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -44,6 +44,46 @@ class UserUpdateRequest(BaseModel):
     role: Annotated[str, StringConstraints(pattern=r"^(user|admin)$")] | None = None
     is_disabled: bool | None = None
     max_active_labs: int | None = None
+
+
+class LabExtendRequest(BaseModel):
+    hours: int
+
+
+INSTANCE_HOURLY_ESTIMATES = {
+    "t3.nano": 0.0052,
+    "t3.micro": 0.0104,
+    "t3.small": 0.0208,
+    "t3.medium": 0.0416,
+    "t3.large": 0.0832,
+    "t4g.nano": 0.0042,
+    "t4g.micro": 0.0084,
+    "t4g.small": 0.0168,
+    "t4g.medium": 0.0336,
+}
+
+
+def _coerce_utc(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _runtime_hours(started_at: datetime | None, ended_at: datetime | None = None) -> float:
+    started = _coerce_utc(started_at)
+    if started is None:
+        return 0
+    ended = _coerce_utc(ended_at) or datetime.now(timezone.utc)
+    return max(0, round((ended - started).total_seconds() / 3600, 2))
+
+
+def _estimated_lab_cost(instance_type: str | None, started_at: datetime | None, ended_at: datetime | None = None) -> float | None:
+    hourly = INSTANCE_HOURLY_ESTIMATES.get(instance_type or "")
+    if hourly is None:
+        return None
+    return round(hourly * _runtime_hours(started_at, ended_at), 2)
 
 
 async def require_admin(
@@ -133,6 +173,20 @@ async def list_users(
     try:
         result = await db.execute(select(User).order_by(User.created_at.desc()).limit(200))
         users = result.scalars().all()
+        lab_stats_result = await db.execute(
+            select(
+                LabInstance.user_id,
+                func.count().label("total_labs"),
+                func.sum(case((LabInstance.status.in_(list(ACTIVE_LAB_STATUSES)), 1), else_=0)).label("active_labs"),
+            ).group_by(LabInstance.user_id)
+        )
+        lab_stats = {
+            row.user_id: {
+                "total_labs": int(row.total_labs or 0),
+                "active_labs": int(row.active_labs or 0),
+            }
+            for row in lab_stats_result
+        }
     except SQLAlchemyError:
         logger.exception("Database query failed while loading users")
         raise HTTPException(status_code=500, detail="Database query failed")
@@ -147,6 +201,8 @@ async def list_users(
             "subscription_tier": user.subscription_tier,
             "max_active_labs": user.max_active_labs,
             "created_at": user.created_at,
+            "active_labs": lab_stats.get(user.id, {}).get("active_labs", 0),
+            "total_labs": lab_stats.get(user.id, {}).get("total_labs", 0),
         }
         for user in users
     ]
@@ -271,12 +327,22 @@ async def list_labs(
             "progress": lab.progress,
             "status_message": lab.status_message,
             "failure_reason": lab.failure_reason,
+            "retry_count": lab.retry_count,
             "cfn_stack_name": lab.cfn_stack_name,
             "ec2_public_ip": lab.ec2_public_ip,
+            "instance_type": template.instance_type,
+            "credits_cost": template.credits_cost,
+            "ttl_hours": template.ttl_hours,
+            "runtime_hours": _runtime_hours(lab.started_at, lab.destroyed_at),
+            "estimated_aws_cost": _estimated_lab_cost(template.instance_type, lab.started_at, lab.destroyed_at),
             "expires_at": lab.expires_at,
             "started_at": lab.started_at,
+            "provisioning_started_at": lab.provisioning_started_at,
             "ready_at": lab.ready_at,
+            "last_status_at": lab.last_status_at,
             "destroyed_at": lab.destroyed_at,
+            "cleanup_required": normalize_lab_status(lab.status) in [LAB_STATUS_FAILED, "DESTROYING"]
+            and not lab.destroyed_at,
         }
         for lab, template, owner in rows
     ]
@@ -320,6 +386,96 @@ async def admin_stop_lab(
         secrets_key=lab.secrets_key,
     )
     return {"instance_id": lab.id, "status": LAB_STATUS_DESTROYING}
+
+
+@router.post("/labs/{instance_id}/extend-ttl")
+async def admin_extend_lab_ttl(
+    body: LabExtendRequest,
+    instance_id: str = Path(..., pattern=INSTANCE_ID_PATTERN),
+    admin_user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    if body.hours < 1 or body.hours > 24:
+        raise HTTPException(status_code=400, detail="TTL extension must be between 1 and 24 hours")
+
+    lab = await db.get(LabInstance, instance_id)
+    if lab is None:
+        raise HTTPException(status_code=404, detail="Lab not found")
+    if normalize_lab_status(lab.status) not in ACTIVE_LAB_STATUSES:
+        raise HTTPException(status_code=400, detail=f"Cannot extend TTL for lab with status {lab.status}")
+
+    base = _coerce_utc(lab.expires_at) or datetime.now(timezone.utc)
+    lab.expires_at = base + timedelta(hours=body.hours)
+    lab.last_status_at = datetime.now(timezone.utc)
+    db.add(
+        LabEvent(
+            instance_id=lab.id,
+            level="warning",
+            phase="ttl-extended",
+            message=f"{admin_user.email} extended lab TTL by {body.hours} hour(s).",
+            progress=lab.progress,
+        )
+    )
+    try:
+        await db.commit()
+    except SQLAlchemyError:
+        await db.rollback()
+        logger.exception("Database write failed while extending lab TTL")
+        raise HTTPException(status_code=500, detail="Database write failed")
+
+    return {"instance_id": lab.id, "expires_at": lab.expires_at}
+
+
+@router.get("/provisioning/jobs")
+async def list_provisioning_jobs(
+    _: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        result = await db.execute(
+            select(LabInstance, LabTemplate, User)
+            .join(LabTemplate, LabTemplate.id == LabInstance.template_id)
+            .join(User, User.id == LabInstance.user_id)
+            .order_by(LabInstance.started_at.desc())
+            .limit(200)
+        )
+        rows = result.all()
+    except SQLAlchemyError:
+        logger.exception("Database query failed while loading provisioning jobs")
+        raise HTTPException(status_code=500, detail="Database query failed")
+
+    jobs = []
+    for lab, template, owner in rows:
+        status = normalize_lab_status(lab.status)
+        started = _coerce_utc(lab.provisioning_started_at) or _coerce_utc(lab.started_at)
+        finished = _coerce_utc(lab.ready_at) or _coerce_utc(lab.destroyed_at)
+        current_duration = _runtime_hours(started, finished)
+        jobs.append(
+            {
+                "id": lab.id,
+                "lab_id": lab.id,
+                "template_title": template.title,
+                "owner_email": owner.email,
+                "owner_id": owner.id,
+                "status": status,
+                "current_step": lab.status_message,
+                "progress": lab.progress,
+                "error": lab.failure_reason,
+                "retries": lab.retry_count,
+                "started_at": lab.started_at,
+                "provisioning_started_at": lab.provisioning_started_at,
+                "finished_at": lab.ready_at or lab.destroyed_at,
+                "duration_hours": current_duration,
+                "resource_ids": {
+                    "cloudformation_stack": lab.cfn_stack_name,
+                    "public_ip": lab.ec2_public_ip,
+                    "secrets_key": lab.secrets_key,
+                },
+                "cleanup_status": "required" if status in [LAB_STATUS_FAILED, LAB_STATUS_DESTROYING] and not lab.destroyed_at else "clean",
+                "is_slow": status in ["QUEUED", "PROVISIONING", "STARTING"] and current_duration > 0.25,
+            }
+        )
+    return jobs
 
 
 @router.get("/events")

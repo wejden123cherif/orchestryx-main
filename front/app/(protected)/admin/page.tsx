@@ -1,271 +1,698 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
-  Activity,
-  AlertTriangle,
-  Boxes,
-  Cloud,
-  Coins,
-  Cpu,
-  Database,
-  Gauge,
-  HardDrive,
-  Layers,
-  ListChecks,
-  LockKeyhole,
-  Network,
-  RefreshCw,
-  Route,
-  Server,
-  Shield,
-  ShieldCheck,
-  Square,
-  Terminal,
-  Users,
-  WalletCards,
-} from "lucide-react";
-import { motion } from "framer-motion";
-import { StatusBadge } from "@/components/platform/status-badge";
-import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
-import { useToast } from "@/components/ui/toast";
-import { useAuth } from "@/hooks/useAuth";
+  Alert,
+  AppLayout,
+  Badge,
+  Box,
+  BreadcrumbGroup,
+  Button,
+  ButtonDropdown,
+  Cards,
+  CollectionPreferences,
+  ColumnLayout,
+  Container,
+  ContentLayout,
+  CopyToClipboard,
+  Flashbar,
+  FormField,
+  Header,
+  HelpPanel,
+  KeyValuePairs,
+  Link,
+  Modal,
+  Pagination,
+  PropertyFilter,
+  Select,
+  SideNavigation,
+  SpaceBetween,
+  Spinner,
+  SplitPanel,
+  StatusIndicator,
+  Table,
+  Tabs,
+  Textarea,
+  TopNavigation,
+} from "@cloudscape-design/components";
+import type { FlashbarProps } from "@cloudscape-design/components/flashbar";
+import type { PropertyFilterProps } from "@cloudscape-design/components/property-filter";
+import type { TableProps } from "@cloudscape-design/components/table";
 import {
   adjustAdminUserCredits,
+  adminExtendLabTtl,
   adminStopLab,
   extractApiErrorMessage,
-  getAdminCreditTransactions,
   getAdminAwsLogs,
   getAdminAwsOverview,
+  getAdminCreditTransactions,
   getAdminEvents,
   getAdminLabs,
   getAdminOverview,
+  getAdminProvisioningJobs,
   getAdminUsers,
 } from "@/lib/api";
 import type {
   AdminLab,
   AdminOverview,
   AdminUser,
-  AwsEcrImage,
-  AwsLogGroup,
+  AwsInstance,
+  AwsLoadBalancer,
   AwsOverview,
-  AwsQueue,
+  AwsSecurityGroup,
+  AwsTargetGroup,
   CreditTransaction,
   LabEvent,
+  ProvisioningJob,
 } from "@/lib/types";
-import { cn, formatDateTime } from "@/lib/utils";
+import { formatDateTime } from "@/lib/utils";
+import { useAuth } from "@/hooks/useAuth";
 
-type AdminTab = "aws" | "labs" | "users" | "events" | "credits";
+type AdminSection =
+  | "overview"
+  | "compute"
+  | "networking"
+  | "security"
+  | "storage"
+  | "labs"
+  | "users"
+  | "billing"
+  | "jobs"
+  | "logs"
+  | "settings";
 
-function Metric({
-  icon: Icon,
-  label,
-  value,
-  tone = "default",
-}: {
-  icon: typeof Activity;
-  label: string;
-  value: string | number;
-  tone?: "default" | "warning" | "danger";
-}) {
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-      className="rounded-lg border border-border bg-card p-4"
-    >
-      <div className="flex items-center justify-between gap-3">
-        <span className="text-sm text-muted-foreground">{label}</span>
-        <Icon
-          className={cn(
-            "h-4 w-4",
-            tone === "danger" ? "text-red-300" : tone === "warning" ? "text-amber-300" : "text-primary"
-          )}
-        />
-      </div>
-      <p className="mt-3 text-3xl text-foreground">{value}</p>
-    </motion.div>
-  );
-}
+type InspectorResource =
+  | { type: "EC2 instance"; title: string; subtitle: string; item: AwsInstance }
+  | { type: "Security group"; title: string; subtitle: string; item: AwsSecurityGroup }
+  | { type: "Lab"; title: string; subtitle: string; item: AdminLab }
+  | { type: "User"; title: string; subtitle: string; item: AdminUser }
+  | { type: "Provisioning job"; title: string; subtitle: string; item: ProvisioningJob }
+  | { type: "Load balancer"; title: string; subtitle: string; item: AwsLoadBalancer }
+  | { type: "Target group"; title: string; subtitle: string; item: AwsTargetGroup };
+
+const sectionLabels: Record<AdminSection, string> = {
+  overview: "Overview",
+  compute: "Compute",
+  networking: "Networking",
+  security: "Security Groups",
+  storage: "Storage",
+  labs: "Labs",
+  users: "Users",
+  billing: "Credits / Billing",
+  jobs: "Provisioning Jobs",
+  logs: "Logs / Debug",
+  settings: "Settings",
+};
+
+const defaultQuery: PropertyFilterProps.Query = { tokens: [], operation: "and" };
 
 function fmt(value?: string | null): string {
   return value ? formatDateTime(value) : "Unavailable";
 }
 
-function healthTone(status?: string | null): "default" | "warning" | "danger" {
-  const normalized = String(status ?? "").toUpperCase();
-  if (["ACTIVE", "OK", "CREATE_COMPLETE", "UPDATE_COMPLETE", "RUNNING", "LIVE"].includes(normalized)) {
-    return "default";
-  }
-  if (["ERROR", "FAILED", "ROLLBACK_COMPLETE", "ALARM"].includes(normalized)) {
-    return "danger";
-  }
-  return "warning";
+function money(value?: number | null): string {
+  return typeof value === "number" ? `$${value.toFixed(2)}` : "n/a";
 }
 
-function HealthPill({ value }: { value?: string | null }) {
-  const tone = healthTone(value);
+function compact(value?: string | null, chars = 16): string {
+  if (!value) return "-";
+  return value.length > chars ? `${value.slice(0, chars)}...` : value;
+}
+
+function statusType(value?: string | null): "success" | "warning" | "error" | "info" {
+  const normalized = String(value ?? "").toUpperCase();
+  if (["FAILED", "ERROR", "ALARM", "ROLLBACK_COMPLETE", "HIGH"].includes(normalized)) return "error";
+  if (["QUEUED", "PROVISIONING", "STARTING", "DESTROYING", "MEDIUM", "LAGGING", "ATTENTION"].includes(normalized)) return "warning";
+  if (["READY", "RUNNING", "ACTIVE", "OK", "LOW", "LIVE", "CREATE_COMPLETE"].includes(normalized)) return "success";
+  return "info";
+}
+
+function Status({ value }: { value?: string | null }) {
+  return <StatusIndicator type={statusType(value)}>{value ?? "unknown"}</StatusIndicator>;
+}
+
+function RiskBadge({ value }: { value?: string | null }) {
+  const color = value === "high" ? "red" : value === "medium" ? "severity-medium" : "green";
+  return <Badge color={color}>{value ?? "low"}</Badge>;
+}
+
+function ConsoleLink({ href, label = "Open in AWS Console" }: { href?: string; label?: string }) {
+  if (!href) return <Box color="text-status-inactive">No console link</Box>;
   return (
-    <span
-      className={cn(
-        "inline-flex w-fit items-center rounded-full border px-2 py-0.5 text-xs",
-        tone === "danger"
-          ? "border-red-400/35 bg-red-500/10 text-red-300"
-          : tone === "warning"
-            ? "border-amber-400/35 bg-amber-500/10 text-amber-300"
-            : "border-green-400/35 bg-green-500/10 text-green-300"
-      )}
-    >
-      {value ?? "Unknown"}
-    </span>
+    <Link href={href} external>
+      {label}
+    </Link>
   );
 }
 
-function UtilBar({ label, value }: { label: string; value?: number | null }) {
-  const normalized = Math.max(0, Math.min(100, value ?? 0));
+function tokenValue(token: PropertyFilterProps.Query["tokens"][number]): string {
+  if (Array.isArray(token.value)) return token.value.join(" ");
+  return String(token.value ?? "");
+}
+
+function matchesQuery<T>(
+  item: T,
+  query: PropertyFilterProps.Query,
+  freeText: (item: T) => string,
+  fields: Record<string, (item: T) => string | number | null | undefined>
+): boolean {
+  if (!query.tokens.length) return true;
+  const checks = query.tokens.map((token) => {
+    const needle = tokenValue(token).toLowerCase();
+    if (!needle) return true;
+    const source = token.propertyKey && fields[token.propertyKey] ? String(fields[token.propertyKey](item) ?? "") : freeText(item);
+    const haystack = source.toLowerCase();
+    const contains = haystack.includes(needle);
+    return token.operator === "!:" || token.operator === "!=" ? !contains : contains;
+  });
+  return query.operation === "or" ? checks.some(Boolean) : checks.every(Boolean);
+}
+
+function usePagedItems<T>(
+  items: T[],
+  pageSize: number,
+  query: PropertyFilterProps.Query,
+  freeText: (item: T) => string,
+  fields: Record<string, (item: T) => string | number | null | undefined>
+) {
+  const [currentPageIndex, setCurrentPageIndex] = useState(1);
+  const filtered = useMemo(() => items.filter((item) => matchesQuery(item, query, freeText, fields)), [fields, freeText, items, query]);
+  const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const page = Math.min(currentPageIndex, pageCount);
+  const visible = filtered.slice((page - 1) * pageSize, page * pageSize);
+  return { filtered, visible, page, pageCount, setCurrentPageIndex };
+}
+
+function EmptyState({ title, detail }: { title: string; detail: string }) {
   return (
-    <div>
-      <div className="flex items-center justify-between text-xs">
-        <span className="text-muted-foreground">{label}</span>
-        <span className="mono text-foreground">{value == null ? "-" : `${normalized.toFixed(1)}%`}</span>
-      </div>
-      <div className="mt-2 h-2 overflow-hidden rounded-full bg-secondary">
-        <div
-          className={cn(
-            "h-full rounded-full transition-all",
-            normalized > 85 ? "bg-red-400" : normalized > 65 ? "bg-amber-300" : "bg-primary"
-          )}
-          style={{ width: `${normalized}%` }}
-        />
-      </div>
-    </div>
+    <Box textAlign="center" color="inherit" padding="l">
+      <SpaceBetween size="s">
+        <Box variant="strong">{title}</Box>
+        <Box variant="p" color="inherit">
+          {detail}
+        </Box>
+      </SpaceBetween>
+    </Box>
   );
 }
 
-function CloudNode({
-  icon: Icon,
-  title,
-  detail,
-  status,
+function MetricCards({
+  overview,
+  aws,
+  jobs,
+  users,
 }: {
-  icon: typeof Cloud;
-  title: string;
-  detail: string;
-  status?: string | null;
+  overview: AdminOverview | null;
+  aws: AwsOverview | null;
+  jobs: ProvisioningJob[];
+  users: AdminUser[];
+}) {
+  const highRiskGroups = aws?.network.security_groups.filter((group) => group.risk_level === "high").length ?? 0;
+  const runningInstances = aws?.ec2.lab_instances.filter((instance) => instance.state === "running").length ?? 0;
+  const slowJobs = jobs.filter((job) => job.is_slow).length;
+  const activeUsers = users.filter((item) => (item.active_labs ?? 0) > 0).length;
+
+  return (
+    <ColumnLayout columns={4} variant="text-grid">
+      <Container header={<Header variant="h3">Active labs</Header>}>
+        <Box variant="awsui-key-label">{overview?.labs.active ?? 0}</Box>
+        <Box color="text-body-secondary">{overview?.labs.failed ?? 0} failed, {overview?.labs.queued ?? 0} queued</Box>
+      </Container>
+      <Container header={<Header variant="h3">Compute running</Header>}>
+        <Box variant="awsui-key-label">{runningInstances}</Box>
+        <Box color="text-body-secondary">{aws?.ec2.lab_instances.length ?? 0} tagged hosts</Box>
+      </Container>
+      <Container header={<Header variant="h3">Security exposure</Header>}>
+        <Box variant="awsui-key-label">{highRiskGroups}</Box>
+        <Box color="text-body-secondary">high-risk groups</Box>
+      </Container>
+      <Container header={<Header variant="h3">Spend / jobs</Header>}>
+        <Box variant="awsui-key-label">{money(aws?.costs.total)}</Box>
+        <Box color="text-body-secondary">{slowJobs} slow jobs, {activeUsers} active users</Box>
+      </Container>
+    </ColumnLayout>
+  );
+}
+
+function ResourceFilter({
+  query,
+  onChange,
+  count,
+  properties,
+  options = [],
+}: {
+  query: PropertyFilterProps.Query;
+  onChange: (query: PropertyFilterProps.Query) => void;
+  count: number;
+  properties: PropertyFilterProps.FilteringProperty[];
+  options?: PropertyFilterProps.FilteringOption[];
 }) {
   return (
-    <motion.div
-      whileHover={{ y: -2 }}
-      className="relative rounded-lg border border-border bg-secondary/45 p-4"
-    >
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex min-w-0 items-center gap-3">
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-border bg-card text-primary">
-            <Icon className="h-4 w-4" />
-          </div>
-          <div className="min-w-0">
-            <p className="truncate text-sm text-foreground">{title}</p>
-            <p className="mt-0.5 truncate text-xs text-muted-foreground">{detail}</p>
-          </div>
-        </div>
-        <HealthPill value={status ?? "OK"} />
-      </div>
-    </motion.div>
+    <PropertyFilter
+      query={query}
+      onChange={({ detail }) => onChange(detail)}
+      filteringProperties={properties}
+      filteringOptions={options}
+      countText={`${count} match${count === 1 ? "" : "es"}`}
+      expandToViewport
+      filteringPlaceholder="Filter resources by property or free text"
+      i18nStrings={{
+        filteringAriaLabel: "Filter resources",
+        filteringPlaceholder: "Filter resources",
+        clearFiltersText: "Clear filters",
+        operationAndText: "and",
+        operationOrText: "or",
+        operatorContainsText: "contains",
+        operatorDoesNotContainText: "does not contain",
+        operatorEqualsText: "equals",
+        operatorDoesNotEqualText: "does not equal",
+        editTokenHeader: "Edit filter",
+        propertyText: "Property",
+        operatorText: "Operator",
+        valueText: "Value",
+        cancelActionText: "Cancel",
+        applyActionText: "Apply",
+        allPropertiesLabel: "All properties",
+        tokenLimitShowMore: "Show more",
+        tokenLimitShowFewer: "Show fewer",
+        clearAriaLabel: "Clear",
+        removeTokenButtonAriaLabel: (token) => `Remove token ${token.propertyKey ?? token.value}`,
+        enteredTextLabel: (text) => `Use: ${text}`,
+      }}
+    />
   );
 }
 
-function ResourceMiniTable({
+function Preferences({
+  pageSize,
+  setPageSize,
+}: {
+  pageSize: number;
+  setPageSize: (value: number) => void;
+}) {
+  return (
+    <CollectionPreferences
+      title="Preferences"
+      confirmLabel="Confirm"
+      cancelLabel="Cancel"
+      preferences={{ pageSize }}
+      onConfirm={({ detail }) => setPageSize(detail.pageSize ?? pageSize)}
+      pageSizePreference={{
+        title: "Page size",
+        options: [
+          { value: 10, label: "10 resources" },
+          { value: 25, label: "25 resources" },
+          { value: 50, label: "50 resources" },
+        ],
+      }}
+    />
+  );
+}
+
+function ResourceTable<T>({
   title,
-  icon: Icon,
-  rows,
+  description,
+  items,
+  filteredCount,
+  page,
+  pageCount,
+  setPage,
+  pageSize,
+  setPageSize,
+  loading,
+  columnDefinitions,
+  trackBy,
+  filter,
+  actions,
   empty,
 }: {
   title: string;
-  icon: typeof Cloud;
-  rows: Array<{ id: string; primary: string; secondary: string; status?: string | null }>;
-  empty: string;
+  description: string;
+  items: T[];
+  filteredCount: number;
+  page: number;
+  pageCount: number;
+  setPage: (page: number) => void;
+  pageSize: number;
+  setPageSize: (size: number) => void;
+  loading: boolean;
+  columnDefinitions: TableProps.ColumnDefinition<T>[];
+  trackBy: TableProps.TrackBy<T>;
+  filter: React.ReactNode;
+  actions?: React.ReactNode;
+  empty: React.ReactNode;
 }) {
   return (
-    <div className="overflow-hidden rounded-lg border border-border bg-card">
-      <div className="flex items-center justify-between border-b border-border p-4">
-        <h3 className="text-lg text-foreground">{title}</h3>
-        <Icon className="h-4 w-4 text-primary" />
-      </div>
-      <div className="max-h-80 overflow-auto">
-        {rows.length ? (
-          rows.map((row) => (
-            <div key={row.id} className="grid gap-3 border-b border-border p-4 last:border-b-0 md:grid-cols-[1fr_auto] md:items-center">
-              <div className="min-w-0">
-                <p className="truncate text-sm text-foreground">{row.primary}</p>
-                <p className="truncate text-xs text-muted-foreground">{row.secondary}</p>
-              </div>
-              <HealthPill value={row.status} />
-            </div>
-          ))
-        ) : (
-          <p className="p-4 text-sm text-muted-foreground">{empty}</p>
-        )}
-      </div>
-    </div>
+    <Table
+      trackBy={trackBy}
+      loading={loading}
+      loadingText="Loading resources"
+      items={items}
+      columnDefinitions={columnDefinitions}
+      resizableColumns
+      stickyHeader
+      empty={empty}
+      filter={filter}
+      header={
+        <Header
+          variant="h2"
+          counter={`(${filteredCount})`}
+          actions={actions}
+          description={description}
+        >
+          {title}
+        </Header>
+      }
+      pagination={<Pagination currentPageIndex={page} pagesCount={pageCount} onChange={({ detail }) => setPage(detail.currentPageIndex)} />}
+      preferences={<Preferences pageSize={pageSize} setPageSize={setPageSize} />}
+    />
+  );
+}
+
+function DetailSplitPanel({
+  resource,
+  labs,
+  events,
+}: {
+  resource: InspectorResource | null;
+  labs: AdminLab[];
+  events: LabEvent[];
+}) {
+  if (!resource) {
+    return (
+      <SplitPanel header="Resource details">
+        <Box color="text-body-secondary">Select a resource to inspect metadata, ownership, links, and debug context.</Box>
+      </SplitPanel>
+    );
+  }
+
+  if (resource.type === "EC2 instance") {
+    const instance = resource.item;
+    const linkedLab = labs.find(
+      (lab) =>
+        lab.instance_id === instance.lab_instance_id ||
+        lab.cfn_stack_name === instance.stack_name ||
+        Boolean(instance.public_ip && lab.ec2_public_ip === instance.public_ip)
+    );
+    return (
+      <SplitPanel header={`EC2: ${resource.title}`}>
+        <SpaceBetween size="m">
+          <KeyValuePairs
+            columns={3}
+            items={[
+              { label: "Instance ID", value: <CopyToClipboard copyButtonText="Copy" copyErrorText="Copy failed" copySuccessText="Copied" textToCopy={instance.id ?? ""} /> },
+              { label: "State", value: <Status value={instance.state} /> },
+              { label: "Type", value: instance.type ?? "-" },
+              { label: "AZ", value: instance.az ?? "-" },
+              { label: "Public IP", value: instance.public_ip ?? "-" },
+              { label: "Private IP", value: instance.private_ip ?? "-" },
+              { label: "Uptime", value: `${instance.uptime_hours ?? 0}h` },
+              { label: "Estimated running cost", value: money(instance.estimated_running_cost) },
+              { label: "AWS Console", value: <ConsoleLink href={instance.console_url} label="Open instance" /> },
+            ]}
+          />
+          <Container header={<Header variant="h3">Debug ownership</Header>}>
+            {linkedLab ? (
+              <SpaceBetween size="s">
+                <Box>This instance is linked to lab <strong>{linkedLab.template_title}</strong> owned by <strong>{linkedLab.owner_email}</strong>.</Box>
+                <Box>Stack: {linkedLab.cfn_stack_name ?? "-"} · status: {linkedLab.status} · expires: {fmt(linkedLab.expires_at)}</Box>
+              </SpaceBetween>
+            ) : (
+              <Alert type="warning">No local lab row matched this host by lab ID, stack name, or public IP. Treat it as a possible orphan until verified.</Alert>
+            )}
+          </Container>
+          <Tabs
+            tabs={[
+              {
+                id: "network",
+                label: "Networking",
+                content: (
+                  <KeyValuePairs
+                    columns={2}
+                    items={[
+                      { label: "VPC", value: instance.vpc_id ?? "-" },
+                      { label: "Subnet", value: instance.subnet_id ?? "-" },
+                      { label: "Security groups", value: (instance.security_groups ?? []).map((group) => `${group.name} (${group.id})`).join(", ") || "-" },
+                      { label: "Volumes", value: (instance.volume_ids ?? []).join(", ") || "-" },
+                    ]}
+                  />
+                ),
+              },
+              {
+                id: "tags",
+                label: "Tags",
+                content: (
+                  <Table
+                    trackBy="key"
+                    items={Object.entries(instance.tags ?? {}).map(([key, value]) => ({ key, value }))}
+                    columnDefinitions={[
+                      { id: "key", header: "Key", cell: (item) => item.key },
+                      { id: "value", header: "Value", cell: (item) => item.value },
+                    ]}
+                    empty={<EmptyState title="No tags" detail="This resource did not return tags." />}
+                  />
+                ),
+              },
+            ]}
+          />
+        </SpaceBetween>
+      </SplitPanel>
+    );
+  }
+
+  if (resource.type === "Security group") {
+    const group = resource.item;
+    return (
+      <SplitPanel header={`Security group: ${resource.title}`}>
+        <SpaceBetween size="m">
+          <KeyValuePairs
+            columns={3}
+            items={[
+              { label: "Group ID", value: <CopyToClipboard copyButtonText="Copy" copyErrorText="Copy failed" copySuccessText="Copied" textToCopy={group.id ?? ""} /> },
+              { label: "VPC", value: group.vpc_id ?? "-" },
+              { label: "Risk", value: <RiskBadge value={group.risk_level} /> },
+              { label: "Attached resources", value: String(group.attached_count ?? 0) },
+              { label: "Inbound rules", value: String(group.ingress_rules ?? 0) },
+              { label: "Outbound rules", value: String(group.egress_rules ?? 0) },
+              { label: "AWS Console", value: <ConsoleLink href={group.console_url} label="Open security group" /> },
+            ]}
+          />
+          <Table
+            trackBy={(item) => `${item.direction}-${item.protocol}-${item.ports}-${item.targets.map((target) => target.value).join(",")}`}
+            items={group.rules ?? []}
+            columnDefinitions={[
+              { id: "direction", header: "Direction", cell: (item) => <Badge>{item.direction}</Badge> },
+              { id: "protocol", header: "Protocol", cell: (item) => item.protocol },
+              { id: "ports", header: "Port/range", cell: (item) => item.ports },
+              { id: "targets", header: "Source / destination", cell: (item) => item.targets.map((target) => `${target.type}: ${target.value}`).join(", ") || "-" },
+              { id: "risk", header: "Risk", cell: (item) => <RiskBadge value={item.risk} /> },
+              { id: "explanation", header: "Explanation", cell: (item) => item.explanation },
+            ]}
+            header={<Header variant="h3">Rule debugger</Header>}
+            empty={<EmptyState title="No rules" detail="This security group did not return ingress or egress rules." />}
+          />
+          <Table
+            trackBy={(item) => item.network_interface_id ?? item.instance_id ?? item.private_ip ?? "attachment"}
+            items={group.attachments ?? []}
+            columnDefinitions={[
+              { id: "eni", header: "Network interface", cell: (item) => item.network_interface_id ?? "-" },
+              { id: "instance", header: "Instance", cell: (item) => item.instance_id ?? "-" },
+              { id: "private", header: "Private IP", cell: (item) => item.private_ip ?? "-" },
+              { id: "status", header: "Status", cell: (item) => <Status value={item.status} /> },
+            ]}
+            header={<Header variant="h3">Attachments</Header>}
+            empty={<Alert type="warning">No attachments found. This group may be unused and safe to review for cleanup.</Alert>}
+          />
+        </SpaceBetween>
+      </SplitPanel>
+    );
+  }
+
+  if (resource.type === "Lab") {
+    const lab = resource.item;
+    const labEvents = events.filter((event) => event.instance_id === lab.instance_id).slice(0, 12);
+    return (
+      <SplitPanel header={`Lab: ${resource.title}`}>
+        <SpaceBetween size="m">
+          <KeyValuePairs
+            columns={3}
+            items={[
+              { label: "Lab ID", value: <CopyToClipboard copyButtonText="Copy" copyErrorText="Copy failed" copySuccessText="Copied" textToCopy={lab.instance_id} /> },
+              { label: "Owner", value: lab.owner_email },
+              { label: "Status", value: <Status value={String(lab.status)} /> },
+              { label: "Progress", value: `${lab.progress}%` },
+              { label: "Retries", value: String(lab.retry_count ?? 0) },
+              { label: "Public IP", value: lab.ec2_public_ip ?? "-" },
+              { label: "Stack", value: lab.cfn_stack_name ?? "-" },
+              { label: "Expires", value: fmt(lab.expires_at) },
+              { label: "Estimated cost", value: money(lab.estimated_aws_cost) },
+            ]}
+          />
+          {lab.failure_reason ? <Alert type="error">{lab.failure_reason}</Alert> : <Alert type="info">{lab.status_message}</Alert>}
+          <Table
+            trackBy="id"
+            items={labEvents}
+            columnDefinitions={[
+              { id: "time", header: "Time", cell: (item) => fmt(item.created_at) },
+              { id: "level", header: "Level", cell: (item) => <Status value={item.level} /> },
+              { id: "phase", header: "Phase", cell: (item) => item.phase },
+              { id: "message", header: "Message", cell: (item) => item.message },
+            ]}
+            header={<Header variant="h3">Lifecycle events</Header>}
+            empty={<EmptyState title="No events" detail="No recent events were returned for this lab." />}
+          />
+        </SpaceBetween>
+      </SplitPanel>
+    );
+  }
+
+  if (resource.type === "Provisioning job") {
+    const job = resource.item;
+    return (
+      <SplitPanel header={`Job: ${resource.title}`}>
+        <SpaceBetween size="m">
+          <KeyValuePairs
+            columns={3}
+            items={[
+              { label: "Job ID", value: <CopyToClipboard copyButtonText="Copy" copyErrorText="Copy failed" copySuccessText="Copied" textToCopy={job.id} /> },
+              { label: "Lab", value: job.template_title },
+              { label: "User", value: job.owner_email },
+              { label: "Status", value: <Status value={String(job.status)} /> },
+              { label: "Duration", value: `${job.duration_hours}h` },
+              { label: "Retries", value: String(job.retries) },
+              { label: "Stack", value: job.resource_ids.cloudformation_stack ?? "-" },
+              { label: "Cleanup", value: <Status value={job.cleanup_status} /> },
+              { label: "Slow", value: job.is_slow ? "yes" : "no" },
+            ]}
+          />
+          {job.error ? <Alert type="error">{job.error}</Alert> : <Alert type="info">{job.current_step}</Alert>}
+        </SpaceBetween>
+      </SplitPanel>
+    );
+  }
+
+  if (resource.type === "User") {
+    const user = resource.item;
+    return (
+      <SplitPanel header={`User: ${resource.title}`}>
+        <KeyValuePairs
+          columns={2}
+          items={[
+            { label: "User ID", value: <CopyToClipboard copyButtonText="Copy" copyErrorText="Copy failed" copySuccessText="Copied" textToCopy={user.id} /> },
+            { label: "Email", value: user.email },
+            { label: "Role", value: <Badge>{user.role}</Badge> },
+            { label: "Status", value: <Status value={user.is_disabled ? "disabled" : "active"} /> },
+            { label: "Credits", value: String(user.credits_balance) },
+            { label: "Active labs", value: String(user.active_labs ?? 0) },
+            { label: "Total labs", value: String(user.total_labs ?? 0) },
+            { label: "Created", value: fmt(user.created_at) },
+          ]}
+        />
+      </SplitPanel>
+    );
+  }
+
+  const resourceWithConsole = resource.item as { console_url?: string };
+  return (
+    <SplitPanel header={`${resource.type}: ${resource.title}`}>
+      <KeyValuePairs
+        columns={2}
+        items={[
+          { label: "Name", value: resource.title },
+          { label: "Identifier", value: resource.subtitle },
+          { label: "AWS Console", value: <ConsoleLink href={resourceWithConsole.console_url} /> },
+        ]}
+      />
+    </SplitPanel>
   );
 }
 
 export default function AdminPage() {
-  const { user } = useAuth();
-  const { toast } = useToast();
+  const router = useRouter();
+  const { user, logout } = useAuth();
   const [overview, setOverview] = useState<AdminOverview | null>(null);
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [labs, setLabs] = useState<AdminLab[]>([]);
   const [events, setEvents] = useState<LabEvent[]>([]);
   const [credits, setCredits] = useState<CreditTransaction[]>([]);
+  const [jobs, setJobs] = useState<ProvisioningJob[]>([]);
   const [aws, setAws] = useState<AwsOverview | null>(null);
-  const [awsLogs, setAwsLogs] = useState<string>("");
-  const [awsLogService, setAwsLogService] = useState<"api" | "worker">("worker");
-  const [tab, setTab] = useState<AdminTab>("aws");
-  const [isLoading, setIsLoading] = useState(true);
+  const [logs, setLogs] = useState("");
+  const [logService, setLogService] = useState<"api" | "worker">("worker");
+  const [activeSection, setActiveSection] = useState<AdminSection>("overview");
+  const [query, setQuery] = useState<PropertyFilterProps.Query>(defaultQuery);
+  const [pageSize, setPageSize] = useState(10);
+  const [loading, setLoading] = useState(true);
+  const [navigationOpen, setNavigationOpen] = useState(true);
+  const [toolsOpen, setToolsOpen] = useState(false);
+  const [splitPanelOpen, setSplitPanelOpen] = useState(false);
+  const [inspector, setInspector] = useState<InspectorResource | null>(null);
+  const [flashItems, setFlashItems] = useState<FlashbarProps.MessageDefinition[]>([]);
+  const [confirmLab, setConfirmLab] = useState<AdminLab | null>(null);
   const [actionId, setActionId] = useState<string | null>(null);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [awsErrorMessage, setAwsErrorMessage] = useState<string | null>(null);
+  const [awsWarning, setAwsWarning] = useState<string | null>(null);
+  const [coreError, setCoreError] = useState<string | null>(null);
+
+  const notify = useCallback((type: FlashbarProps.Type, content: string, header?: string) => {
+    const id = `${Date.now()}-${Math.random()}`;
+    setFlashItems((items) => [
+      ...items,
+      {
+        id,
+        type,
+        header,
+        content,
+        dismissible: true,
+        onDismiss: () => setFlashItems((current) => current.filter((item) => item.id !== id)),
+      },
+    ]);
+  }, []);
+
+  const openInspector = useCallback((resource: InspectorResource) => {
+    setInspector(resource);
+    setSplitPanelOpen(true);
+  }, []);
+
+  const loadLogs = useCallback(async (service: "api" | "worker") => {
+    setLogService(service);
+    try {
+      setLogs(await getAdminAwsLogs(service));
+    } catch (error) {
+      setLogs(extractApiErrorMessage(error));
+    }
+  }, []);
 
   const loadAdmin = useCallback(async () => {
-    setIsLoading(true);
-    setErrorMessage(null);
-    setAwsErrorMessage(null);
-
+    setLoading(true);
+    setCoreError(null);
+    setAwsWarning(null);
     try {
-      const [nextOverview, nextUsers, nextLabs, nextEvents, nextCredits, nextAws] =
-        await Promise.allSettled([
-          getAdminOverview(),
-          getAdminUsers(),
-          getAdminLabs(),
-          getAdminEvents(),
-          getAdminCreditTransactions(),
-          getAdminAwsOverview(),
-        ]);
+      const [nextOverview, nextUsers, nextLabs, nextEvents, nextCredits, nextJobs, nextAws] = await Promise.allSettled([
+        getAdminOverview(),
+        getAdminUsers(),
+        getAdminLabs(),
+        getAdminEvents(),
+        getAdminCreditTransactions(),
+        getAdminProvisioningJobs(),
+        getAdminAwsOverview(),
+      ]);
 
       if (nextOverview.status === "fulfilled") setOverview(nextOverview.value);
       if (nextUsers.status === "fulfilled") setUsers(nextUsers.value);
       if (nextLabs.status === "fulfilled") setLabs(nextLabs.value);
       if (nextEvents.status === "fulfilled") setEvents(nextEvents.value);
       if (nextCredits.status === "fulfilled") setCredits(nextCredits.value);
+      if (nextJobs.status === "fulfilled") setJobs(nextJobs.value);
+      if (nextAws.status === "fulfilled") setAws(nextAws.value);
+      else setAwsWarning(extractApiErrorMessage(nextAws.reason));
 
-      if (nextAws.status === "fulfilled") {
-        setAws(nextAws.value);
-      } else {
-        setAwsErrorMessage(extractApiErrorMessage(nextAws.reason));
-      }
-
-      const firstCoreFailure = [nextOverview, nextUsers, nextLabs, nextEvents, nextCredits].find(
-        (result) => result.status === "rejected"
-      );
-      if (firstCoreFailure?.status === "rejected") {
-        setErrorMessage(extractApiErrorMessage(firstCoreFailure.reason));
-      }
+      const coreFailure = [nextOverview, nextUsers, nextLabs, nextEvents, nextCredits, nextJobs].find((result) => result.status === "rejected");
+      if (coreFailure?.status === "rejected") setCoreError(extractApiErrorMessage(coreFailure.reason));
     } catch (error) {
-      setErrorMessage(extractApiErrorMessage(error));
+      setCoreError(extractApiErrorMessage(error));
     } finally {
-      setIsLoading(false);
+      setLoading(false);
     }
   }, []);
 
@@ -273,621 +700,811 @@ export default function AdminPage() {
     void Promise.resolve().then(loadAdmin);
   }, [loadAdmin]);
 
-  const failedLabs = useMemo(
-    () => labs.filter((lab) => String(lab.status).toUpperCase() === "FAILED"),
-    [labs]
+  useEffect(() => {
+    if (activeSection === "logs") void Promise.resolve().then(() => loadLogs(logService));
+  }, [activeSection, loadLogs, logService]);
+
+  const resetCollectionState = (section: AdminSection) => {
+    setActiveSection(section);
+    setQuery(defaultQuery);
+  };
+
+  const stopLab = async () => {
+    if (!confirmLab) return;
+    setActionId(confirmLab.instance_id);
+    try {
+      await adminStopLab(confirmLab.instance_id);
+      notify("success", `Teardown queued for ${confirmLab.template_title}`, "Lab stop requested");
+      setConfirmLab(null);
+      await loadAdmin();
+    } catch (error) {
+      notify("error", extractApiErrorMessage(error), "Could not stop lab");
+    } finally {
+      setActionId(null);
+    }
+  };
+
+  const extendLab = async (lab: AdminLab, hours: number) => {
+    setActionId(lab.instance_id);
+    try {
+      await adminExtendLabTtl(lab.instance_id, hours);
+      notify("success", `${lab.template_title} extended by ${hours}h`, "TTL extended");
+      await loadAdmin();
+    } catch (error) {
+      notify("error", extractApiErrorMessage(error), "TTL extension failed");
+    } finally {
+      setActionId(null);
+    }
+  };
+
+  const addCredit = async (row: AdminUser) => {
+    setActionId(row.id);
+    try {
+      await adjustAdminUserCredits(row.id, 5, "Operator credit grant");
+      notify("success", `Added 5 credits to ${row.email}`, "Credits updated");
+      await loadAdmin();
+    } catch (error) {
+      notify("error", extractApiErrorMessage(error), "Credit adjustment failed");
+    } finally {
+      setActionId(null);
+    }
+  };
+
+  const commonActions = (
+    <SpaceBetween direction="horizontal" size="xs">
+      <Button iconName="refresh" loading={loading} onClick={loadAdmin}>Refresh</Button>
+    </SpaceBetween>
   );
 
-  const recommendations = useMemo(() => {
-    if (!aws) return [];
-    const items: Array<{ title: string; detail: string; tone: "warning" | "danger" | "default" }> = [];
-    const oldestProvision = aws.sqs.provision.oldest_age_seconds ?? 0;
-    if (oldestProvision > 300) {
-      items.push({
-        title: "Provision queue aging",
-        detail: `Oldest provision message is ${Math.round(oldestProvision / 60)} minutes old. Check worker concurrency and SQS visibility.`,
-        tone: "warning",
-      });
-    }
-    if ((aws.ecs.worker.running ?? 0) < (aws.ecs.worker.desired ?? 0)) {
-      items.push({
-        title: "Worker capacity degraded",
-        detail: "The worker service has fewer running tasks than desired. Check ECS events and task logs.",
-        tone: "danger",
-      });
-    }
-    if (aws.alarms.firing > 0) {
-      items.push({
-        title: "CloudWatch alarms firing",
-        detail: `${aws.alarms.firing} alarm${aws.alarms.firing === 1 ? "" : "s"} need attention.`,
-        tone: "danger",
-      });
-    }
-    if ((aws.secrets.items ?? []).some((secret) => !secret.rotation_enabled && !secret.name?.includes("/lab/"))) {
-      items.push({
-        title: "Runtime secret rotation",
-        detail: "At least one non-lab Orchestryx secret does not have rotation enabled.",
-        tone: "warning",
-      });
-    }
-    if (!aws.load_balancing.load_balancers.length) {
-      items.push({
-        title: "No load balancer discovered",
-        detail: "The overlay did not find an Orchestryx ALB/NLB. Confirm this is expected for the current deployment.",
-        tone: "default",
-      });
-    }
-    if (!items.length) {
-      items.push({
-        title: "Control plane stable",
-        detail: "No high-signal operational recommendations from the current AWS snapshot.",
-        tone: "default",
-      });
-    }
-    return items.slice(0, 4);
-  }, [aws]);
+  const instances = aws?.ec2.lab_instances ?? [];
+  const ecrImages = [aws?.ecr.api, aws?.ecr.worker].filter((item): item is NonNullable<typeof item> => Boolean(item));
+  const instanceFields = useMemo(() => ({
+    state: (item: AwsInstance) => item.state,
+    type: (item: AwsInstance) => item.type,
+    az: (item: AwsInstance) => item.az,
+    owner: (item: AwsInstance) => labs.find((lab) => lab.instance_id === item.lab_instance_id || lab.ec2_public_ip === item.public_ip)?.owner_email,
+    lab: (item: AwsInstance) => item.lab_instance_id,
+  }), [labs]);
+  const instanceCollection = usePagedItems(
+    instances,
+    pageSize,
+    query,
+    (item) => [item.id, item.name, item.public_ip, item.private_ip, item.lab_instance_id, item.stack_name, item.az, item.state].join(" "),
+    instanceFields
+  );
 
-  const loadAwsLogs = useCallback(async (service: "api" | "worker") => {
-    setAwsLogService(service);
-    try {
-      setAwsLogs(await getAdminAwsLogs(service));
-    } catch (error) {
-      setAwsLogs(extractApiErrorMessage(error));
+  const securityGroups = aws?.network.security_groups ?? [];
+  const securityCollection = usePagedItems(
+    securityGroups,
+    pageSize,
+    query,
+    (item) => [item.id, item.name, item.description, item.vpc_id, item.risk_level].join(" "),
+    {
+      risk: (item) => item.risk_level,
+      vpc: (item) => item.vpc_id,
+      name: (item) => item.name,
+      attached: (item) => item.attached_count,
     }
-  }, []);
+  );
 
-  useEffect(() => {
-    if (tab === "aws" && user?.role === "admin") {
-      void Promise.resolve().then(() => loadAwsLogs(awsLogService));
+  const labsCollection = usePagedItems(
+    labs,
+    pageSize,
+    query,
+    (item) => [item.instance_id, item.template_title, item.owner_email, item.status, item.ec2_public_ip, item.cfn_stack_name].join(" "),
+    {
+      status: (item) => String(item.status),
+      owner: (item) => item.owner_email,
+      template: (item) => item.template_title,
     }
-  }, [awsLogService, loadAwsLogs, tab, user?.role]);
+  );
 
-  const stopLab = async (instanceId: string) => {
-    setActionId(instanceId);
-    try {
-      await adminStopLab(instanceId);
-      toast({ title: "Teardown queued", tone: "success" });
-      await loadAdmin();
-    } catch (error) {
-      toast({
-        title: "Could not stop lab",
-        description: extractApiErrorMessage(error),
-        tone: "error",
-      });
-    } finally {
-      setActionId(null);
+  const usersCollection = usePagedItems(
+    users,
+    pageSize,
+    query,
+    (item) => [item.id, item.email, item.role, item.subscription_tier].join(" "),
+    {
+      role: (item) => item.role,
+      status: (item) => (item.is_disabled ? "disabled" : "active"),
+      email: (item) => item.email,
     }
-  };
+  );
 
-  const addCredit = async (targetUser: AdminUser) => {
-    setActionId(targetUser.id);
-    try {
-      await adjustAdminUserCredits(targetUser.id, 5, "Operator credit grant");
-      toast({ title: "Credits added", tone: "success" });
-      await loadAdmin();
-    } catch (error) {
-      toast({
-        title: "Credit adjustment failed",
-        description: extractApiErrorMessage(error),
-        tone: "error",
-      });
-    } finally {
-      setActionId(null);
+  const jobsCollection = usePagedItems(
+    jobs,
+    pageSize,
+    query,
+    (item) => [item.id, item.template_title, item.owner_email, item.status, item.current_step, item.error, item.cleanup_status].join(" "),
+    {
+      status: (item) => String(item.status),
+      cleanup: (item) => item.cleanup_status,
+      slow: (item) => (item.is_slow ? "yes" : "no"),
+      owner: (item) => item.owner_email,
     }
-  };
+  );
+
+  const creditCollection = usePagedItems(
+    credits,
+    pageSize,
+    query,
+    (item) => [item.user_id, item.reason, item.delta, item.created_at].join(" "),
+    {
+      user: (item) => item.user_id,
+      reason: (item) => item.reason,
+    }
+  );
+
+  const computeColumns: TableProps.ColumnDefinition<AwsInstance>[] = [
+    {
+      id: "name",
+      header: "Name",
+      cell: (item) => (
+        <Link onFollow={(event) => { event.preventDefault(); openInspector({ type: "EC2 instance", title: item.name ?? item.id ?? "Instance", subtitle: item.id ?? "-", item }); }}>
+          {item.name ?? item.id}
+        </Link>
+      ),
+      sortingField: "name",
+    },
+    { id: "id", header: "Instance ID", cell: (item) => <CopyToClipboard copyButtonText="Copy" copyErrorText="Copy failed" copySuccessText="Copied" textToCopy={item.id ?? ""} /> },
+    { id: "state", header: "State", cell: (item) => <Status value={item.state} />, sortingField: "state" },
+    { id: "type", header: "Type", cell: (item) => item.type ?? "-" },
+    { id: "az", header: "Region/AZ", cell: (item) => item.az ?? aws?.region ?? "-" },
+    { id: "public", header: "Public IP", cell: (item) => item.public_ip ?? "-" },
+    { id: "private", header: "Private IP", cell: (item) => item.private_ip ?? "-" },
+    { id: "lab", header: "Linked lab", cell: (item) => compact(item.lab_instance_id) },
+    { id: "owner", header: "Owner/user", cell: (item) => labs.find((lab) => lab.instance_id === item.lab_instance_id || lab.ec2_public_ip === item.public_ip)?.owner_email ?? "-" },
+    { id: "uptime", header: "Uptime", cell: (item) => `${item.uptime_hours ?? 0}h` },
+    { id: "cost", header: "Estimated cost", cell: (item) => money(item.estimated_running_cost) },
+    {
+      id: "actions",
+      header: "Actions",
+      cell: (item) => (
+        <ButtonDropdown
+          variant="inline-icon"
+          ariaLabel="Instance actions"
+          items={[
+            { id: "view", text: "View details" },
+            { id: "aws", text: "Open in AWS Console", disabled: !item.console_url },
+            { id: "stop", text: "Stop", disabled: true, disabledReason: "TODO: backend EC2 stop action is not implemented" },
+            { id: "reboot", text: "Reboot", disabled: true, disabledReason: "TODO: backend EC2 reboot action is not implemented" },
+            { id: "terminate", text: "Force terminate", disabled: true, disabledReason: "TODO: guarded terminate endpoint required" },
+          ]}
+          onItemClick={({ detail }) => {
+            if (detail.id === "view") openInspector({ type: "EC2 instance", title: item.name ?? item.id ?? "Instance", subtitle: item.id ?? "-", item });
+            if (detail.id === "aws" && item.console_url) window.open(item.console_url, "_blank", "noreferrer");
+          }}
+        />
+      ),
+    },
+  ];
+
+  const securityColumns: TableProps.ColumnDefinition<AwsSecurityGroup>[] = [
+    {
+      id: "name",
+      header: "Security group",
+      cell: (item) => (
+        <Link onFollow={(event) => { event.preventDefault(); openInspector({ type: "Security group", title: item.name ?? item.id ?? "Security group", subtitle: item.id ?? "-", item }); }}>
+          {item.name ?? item.id}
+        </Link>
+      ),
+    },
+    { id: "id", header: "ID", cell: (item) => <CopyToClipboard copyButtonText="Copy" copyErrorText="Copy failed" copySuccessText="Copied" textToCopy={item.id ?? ""} /> },
+    { id: "vpc", header: "VPC", cell: (item) => item.vpc_id ?? "-" },
+    { id: "attached", header: "Attached resources", cell: (item) => String(item.attached_count ?? 0) },
+    { id: "inbound", header: "Inbound", cell: (item) => String(item.ingress_rules ?? 0) },
+    { id: "outbound", header: "Outbound", cell: (item) => String(item.egress_rules ?? 0) },
+    { id: "risk", header: "Risk level", cell: (item) => <RiskBadge value={item.risk_level} /> },
+    { id: "summary", header: "Risk summary", cell: (item) => (item.rules ?? []).filter((rule) => rule.risk !== "low").slice(0, 2).map((rule) => rule.explanation).join(" ") || "No obvious exposure." },
+    {
+      id: "actions",
+      header: "Actions",
+      cell: (item) => (
+        <ButtonDropdown
+          variant="inline-icon"
+          ariaLabel="Security group actions"
+          items={[
+            { id: "view", text: "View details" },
+            { id: "aws", text: "Open in AWS Console", disabled: !item.console_url },
+            { id: "remediate", text: "Remediate rule", disabled: true, disabledReason: "TODO: guarded rule revoke endpoint required" },
+          ]}
+          onItemClick={({ detail }) => {
+            if (detail.id === "view") openInspector({ type: "Security group", title: item.name ?? item.id ?? "Security group", subtitle: item.id ?? "-", item });
+            if (detail.id === "aws" && item.console_url) window.open(item.console_url, "_blank", "noreferrer");
+          }}
+        />
+      ),
+    },
+  ];
+
+  const labColumns: TableProps.ColumnDefinition<AdminLab>[] = [
+    {
+      id: "lab",
+      header: "Lab name / ID",
+      cell: (item) => (
+        <Link onFollow={(event) => { event.preventDefault(); openInspector({ type: "Lab", title: item.template_title, subtitle: item.instance_id, item }); }}>
+          {item.template_title}
+        </Link>
+      ),
+    },
+    { id: "owner", header: "Owner", cell: (item) => item.owner_email },
+    { id: "status", header: "Status", cell: (item) => <Status value={String(item.status)} /> },
+    { id: "created", header: "Created", cell: (item) => fmt(item.started_at) },
+    { id: "uptime", header: "Uptime", cell: (item) => `${item.runtime_hours ?? 0}h` },
+    { id: "ttl", header: "TTL / expiration", cell: (item) => fmt(item.expires_at) },
+    { id: "ip", header: "Public URL/IP", cell: (item) => item.ec2_public_ip ?? "-" },
+    { id: "resources", header: "Resources", cell: (item) => item.cfn_stack_name ?? "-" },
+    { id: "credits", header: "Credits", cell: (item) => String(item.credits_cost ?? 0) },
+    { id: "cost", header: "Estimated AWS cost", cell: (item) => money(item.estimated_aws_cost) },
+    { id: "health", header: "Health", cell: (item) => item.cleanup_required ? <StatusIndicator type="warning">cleanup required</StatusIndicator> : <StatusIndicator type="success">tracked</StatusIndicator> },
+    {
+      id: "actions",
+      header: "Actions",
+      cell: (item) => (
+        <ButtonDropdown
+          variant="inline-icon"
+          ariaLabel="Lab actions"
+          items={[
+            { id: "view", text: "View details" },
+            { id: "extend", text: "Extend TTL by 2h" },
+            { id: "stop", text: "Force stop" },
+            { id: "delete", text: "Force delete", disabled: true, disabledReason: "TODO: hard-delete endpoint required" },
+            { id: "restart", text: "Restart", disabled: true, disabledReason: "TODO: restart flow required" },
+            { id: "logs", text: "Inspect logs" },
+            { id: "cleanup", text: "Cleanup resources", disabled: true, disabledReason: "TODO: orphan cleanup endpoint required" },
+          ]}
+          onItemClick={({ detail }) => {
+            if (detail.id === "view") openInspector({ type: "Lab", title: item.template_title, subtitle: item.instance_id, item });
+            if (detail.id === "extend") void extendLab(item, 2);
+            if (detail.id === "stop") setConfirmLab(item);
+            if (detail.id === "logs") resetCollectionState("logs");
+          }}
+        />
+      ),
+    },
+  ];
+
+  const userColumns: TableProps.ColumnDefinition<AdminUser>[] = [
+    { id: "email", header: "Name/email", cell: (item) => <Link onFollow={(event) => { event.preventDefault(); openInspector({ type: "User", title: item.email, subtitle: item.id, item }); }}>{item.email}</Link> },
+    { id: "role", header: "Role", cell: (item) => <Badge>{item.role}</Badge> },
+    { id: "status", header: "Status", cell: (item) => <Status value={item.is_disabled ? "disabled" : "active"} /> },
+    { id: "credits", header: "Credits", cell: (item) => String(item.credits_balance) },
+    { id: "active", header: "Active labs", cell: (item) => String(item.active_labs ?? 0) },
+    { id: "total", header: "Total labs launched", cell: (item) => String(item.total_labs ?? 0) },
+    { id: "spend", header: "Total estimated spend", cell: (item) => money(labs.filter((lab) => lab.owner_id === item.id).reduce((sum, lab) => sum + (lab.estimated_aws_cost ?? 0), 0)) },
+    { id: "activity", header: "Last activity", cell: (item) => fmt(labs.filter((lab) => lab.owner_id === item.id)[0]?.started_at ?? item.created_at) },
+    {
+      id: "actions",
+      header: "Actions",
+      cell: (item) => (
+        <ButtonDropdown
+          variant="inline-icon"
+          items={[
+            { id: "view", text: "View details" },
+            { id: "credit", text: "Add 5 credits" },
+            { id: "disable", text: "Disable user", disabled: true, disabledReason: "TODO: user status API is available but UI confirmation is not wired yet" },
+          ]}
+          onItemClick={({ detail }) => {
+            if (detail.id === "view") openInspector({ type: "User", title: item.email, subtitle: item.id, item });
+            if (detail.id === "credit") void addCredit(item);
+          }}
+        />
+      ),
+    },
+  ];
+
+  const jobColumns: TableProps.ColumnDefinition<ProvisioningJob>[] = [
+    { id: "id", header: "Job ID", cell: (item) => <Link onFollow={(event) => { event.preventDefault(); openInspector({ type: "Provisioning job", title: item.template_title, subtitle: item.id, item }); }}>{compact(item.id)}</Link> },
+    { id: "lab", header: "Lab", cell: (item) => item.template_title },
+    { id: "user", header: "User", cell: (item) => item.owner_email },
+    { id: "status", header: "Status", cell: (item) => <Status value={String(item.status)} /> },
+    { id: "step", header: "Current step", cell: (item) => item.current_step },
+    { id: "duration", header: "Duration", cell: (item) => `${item.duration_hours}h` },
+    { id: "started", header: "Started", cell: (item) => fmt(item.started_at) },
+    { id: "finished", header: "Finished", cell: (item) => fmt(item.finished_at) },
+    { id: "retries", header: "Retries", cell: (item) => String(item.retries) },
+    { id: "resources", header: "Created resources", cell: (item) => item.resource_ids.cloudformation_stack ?? item.resource_ids.public_ip ?? "-" },
+    { id: "error", header: "Error summary", cell: (item) => item.error ?? "-" },
+    { id: "cleanup", header: "Cleanup", cell: (item) => <Status value={item.cleanup_status} /> },
+  ];
+
+  const navigation = (
+    <SideNavigation
+      activeHref={`#${activeSection}`}
+      header={{ href: "#overview", text: "Orchestrryx Admin" }}
+      onFollow={(event) => {
+        event.preventDefault();
+        const next = event.detail.href.replace("#", "") as AdminSection;
+        resetCollectionState(next);
+      }}
+      items={[
+        { type: "link", text: "Overview", href: "#overview" },
+        { type: "section", text: "Cloud resources", items: [
+          { type: "link", text: "Compute", href: "#compute" },
+          { type: "link", text: "Networking", href: "#networking" },
+          { type: "link", text: "Security Groups", href: "#security" },
+          { type: "link", text: "Storage", href: "#storage" },
+        ] },
+        { type: "section", text: "Platform", items: [
+          { type: "link", text: "Labs", href: "#labs" },
+          { type: "link", text: "Users", href: "#users" },
+          { type: "link", text: "Credits / Billing", href: "#billing" },
+          { type: "link", text: "Provisioning Jobs", href: "#jobs" },
+          { type: "link", text: "Logs / Debug", href: "#logs" },
+          { type: "link", text: "Settings", href: "#settings" },
+        ] },
+      ]}
+    />
+  );
+
+  const breadcrumbs = (
+    <BreadcrumbGroup
+      items={[
+        { text: "Orchestrryx Admin", href: "#overview" },
+        { text: sectionLabels[activeSection], href: `#${activeSection}` },
+      ]}
+      onFollow={(event) => event.preventDefault()}
+    />
+  );
+
+  const content = (
+    <ContentLayout
+      header={
+        <Header
+          variant="h1"
+          description="Cloud operations console for AWS resources, labs, provisioning, users, credits, and debugging."
+          actions={commonActions}
+        >
+          {sectionLabels[activeSection]}
+        </Header>
+      }
+    >
+      <SpaceBetween size="l">
+        <Flashbar items={flashItems} />
+        {coreError ? <Alert type="error" header="Admin API error">{coreError}</Alert> : null}
+        {awsWarning ? <Alert type="warning" header="AWS telemetry warning">{awsWarning}</Alert> : null}
+
+        {activeSection === "overview" ? (
+          <SpaceBetween size="l">
+            <MetricCards overview={overview} aws={aws} jobs={jobs} users={users} />
+            <ColumnLayout columns={2}>
+              <Container header={<Header variant="h2">Operator findings</Header>}>
+                <SpaceBetween size="s">
+                  {(aws?.network.security_groups.filter((group) => group.risk_level === "high").length ?? 0) > 0 ? (
+                    <Alert type="error">High-risk security groups expose public or broad access. Open Security Groups to inspect rules.</Alert>
+                  ) : <Alert type="success">No high-risk security group rules detected in the current AWS snapshot.</Alert>}
+                  {jobs.some((job) => job.is_slow) ? <Alert type="warning">Slow provisioning jobs are present. Open Provisioning Jobs for step and cleanup detail.</Alert> : null}
+                  {labs.some((lab) => lab.cleanup_required) ? <Alert type="warning">Some labs need cleanup verification to prevent orphaned spend.</Alert> : null}
+                </SpaceBetween>
+              </Container>
+              <Cards
+                cardDefinition={{
+                  header: (item) => item.title,
+                  sections: [{ id: "detail", content: (item) => item.detail }],
+                }}
+                cardsPerRow={[{ cards: 1 }, { minWidth: 500, cards: 2 }]}
+                items={[
+                  { title: "Active labs", detail: `${overview?.labs.active ?? 0} active, ${overview?.labs.failed ?? 0} failed` },
+                  { title: "Running compute", detail: `${instances.filter((instance) => instance.state === "running").length} running EC2 lab hosts` },
+                  { title: "Estimated spend", detail: `${money(aws?.costs.total)} for ${aws?.costs.period ?? "current period"}` },
+                  { title: "Users with active labs", detail: `${users.filter((item) => (item.active_labs ?? 0) > 0).length} users currently consuming lab capacity` },
+                ]}
+              />
+            </ColumnLayout>
+          </SpaceBetween>
+        ) : null}
+
+        {activeSection === "compute" ? (
+          <ResourceTable
+            title="EC2 compute resources"
+            description="Tagged Orchestrryx lab hosts with ownership, networking, cost, and AWS console links."
+            items={instanceCollection.visible}
+            filteredCount={instanceCollection.filtered.length}
+            page={instanceCollection.page}
+            pageCount={instanceCollection.pageCount}
+            setPage={instanceCollection.setCurrentPageIndex}
+            pageSize={pageSize}
+            setPageSize={setPageSize}
+            loading={loading}
+            columnDefinitions={computeColumns}
+            trackBy={(item) => item.id ?? item.name ?? "instance"}
+            filter={
+              <ResourceFilter
+                query={query}
+                onChange={setQuery}
+                count={instanceCollection.filtered.length}
+                properties={[
+                  { key: "state", propertyLabel: "State", groupValuesLabel: "State values", operators: [":", "!="] },
+                  { key: "type", propertyLabel: "Type", groupValuesLabel: "Type values", operators: [":", "!="] },
+                  { key: "az", propertyLabel: "AZ", groupValuesLabel: "AZ values", operators: [":", "!="] },
+                  { key: "owner", propertyLabel: "Owner", groupValuesLabel: "Owner values", operators: [":", "!="] },
+                  { key: "lab", propertyLabel: "Lab", groupValuesLabel: "Lab values", operators: [":", "!="] },
+                ]}
+              />
+            }
+            empty={<EmptyState title="No compute resources" detail="No tagged Orchestrryx EC2 instances were returned." />}
+          />
+        ) : null}
+
+        {activeSection === "security" ? (
+          <ResourceTable
+            title="Security group debugger"
+            description="Rule-level ingress and egress debugger with risk classification and attachments."
+            items={securityCollection.visible}
+            filteredCount={securityCollection.filtered.length}
+            page={securityCollection.page}
+            pageCount={securityCollection.pageCount}
+            setPage={securityCollection.setCurrentPageIndex}
+            pageSize={pageSize}
+            setPageSize={setPageSize}
+            loading={loading}
+            columnDefinitions={securityColumns}
+            trackBy={(item) => item.id ?? item.name ?? "security-group"}
+            filter={
+              <ResourceFilter
+                query={query}
+                onChange={setQuery}
+                count={securityCollection.filtered.length}
+                properties={[
+                  { key: "risk", propertyLabel: "Risk", groupValuesLabel: "Risk values", operators: [":", "!="] },
+                  { key: "vpc", propertyLabel: "VPC", groupValuesLabel: "VPC values", operators: [":", "!="] },
+                  { key: "name", propertyLabel: "Name", groupValuesLabel: "Name values", operators: [":", "!="] },
+                  { key: "attached", propertyLabel: "Attached count", groupValuesLabel: "Attached values", operators: [":", "!="] },
+                ]}
+              />
+            }
+            empty={<EmptyState title="No security groups" detail="No relevant Orchestrryx security groups were returned. Check AWS_VPC_ID and EC2 permissions." />}
+          />
+        ) : null}
+
+        {activeSection === "networking" ? (
+          <SpaceBetween size="l">
+            <ColumnLayout columns={3}>
+              {(aws?.network.vpcs ?? []).map((vpc) => (
+                <Container key={vpc.id} header={<Header variant="h3">{vpc.id}</Header>}>
+                  <KeyValuePairs items={[
+                    { label: "CIDR", value: vpc.cidr ?? "-" },
+                    { label: "State", value: <Status value={vpc.state} /> },
+                    { label: "Default", value: vpc.is_default ? "yes" : "no" },
+                    { label: "AWS Console", value: <ConsoleLink href={vpc.console_url} label="Open VPC" /> },
+                  ]} />
+                </Container>
+              ))}
+            </ColumnLayout>
+            <Table
+              trackBy={(item) => item.id ?? "subnet"}
+              header={<Header variant="h2">Subnets</Header>}
+              items={aws?.network.subnets ?? []}
+              columnDefinitions={[
+                { id: "id", header: "Subnet ID", cell: (item) => <ConsoleLink href={item.console_url} label={item.id ?? "Subnet"} /> },
+                { id: "vpc", header: "VPC", cell: (item) => item.vpc_id },
+                { id: "az", header: "AZ", cell: (item) => item.az },
+                { id: "cidr", header: "CIDR", cell: (item) => item.cidr },
+                { id: "ips", header: "Available IPs", cell: (item) => item.available_ips },
+                { id: "public", header: "Public IP on launch", cell: (item) => item.public_ip_on_launch ? "yes" : "no" },
+              ]}
+              empty={<EmptyState title="No subnets" detail="No VPC subnets were returned." />}
+            />
+            <ColumnLayout columns={2}>
+              <Table
+                trackBy={(item) => item.arn ?? item.name ?? "lb"}
+                header={<Header variant="h2">Load balancers</Header>}
+                items={aws?.load_balancing.load_balancers ?? []}
+                columnDefinitions={[
+                  { id: "name", header: "Name", cell: (item) => <Link onFollow={(event) => { event.preventDefault(); openInspector({ type: "Load balancer", title: item.name ?? "Load balancer", subtitle: item.arn ?? "-", item }); }}>{item.name}</Link> },
+                  { id: "state", header: "State", cell: (item) => <Status value={item.state} /> },
+                  { id: "scheme", header: "Scheme", cell: (item) => item.scheme },
+                  { id: "console", header: "AWS Console", cell: (item) => <ConsoleLink href={item.console_url} label="Open" /> },
+                ]}
+              />
+              <Table
+                trackBy={(item) => item.arn ?? item.name ?? "tg"}
+                header={<Header variant="h2">Target groups</Header>}
+                items={aws?.load_balancing.target_groups ?? []}
+                columnDefinitions={[
+                  { id: "name", header: "Name", cell: (item) => <Link onFollow={(event) => { event.preventDefault(); openInspector({ type: "Target group", title: item.name ?? "Target group", subtitle: item.arn ?? "-", item }); }}>{item.name}</Link> },
+                  { id: "port", header: "Protocol / port", cell: (item) => `${item.protocol}:${item.port}` },
+                  { id: "type", header: "Target type", cell: (item) => item.target_type },
+                  { id: "console", header: "AWS Console", cell: (item) => <ConsoleLink href={item.console_url} label="Open" /> },
+                ]}
+              />
+            </ColumnLayout>
+          </SpaceBetween>
+        ) : null}
+
+        {activeSection === "storage" ? (
+          <SpaceBetween size="l">
+            <Table
+              trackBy={(item) => item.repository}
+              header={<Header variant="h2">ECR images</Header>}
+              items={ecrImages}
+              columnDefinitions={[
+                { id: "repository", header: "Repository", cell: (item) => <ConsoleLink href={item?.console_url} label={item?.repository ?? "Repository"} /> },
+                { id: "status", header: "Status", cell: (item) => <Status value={item?.status} /> },
+                { id: "pushed", header: "Pushed", cell: (item) => fmt(item?.pushed_at) },
+                { id: "size", header: "Size", cell: (item) => `${item?.size_mb ?? 0} MB` },
+                { id: "tags", header: "Tags", cell: (item) => item?.tags?.join(", ") ?? "-" },
+              ]}
+            />
+            <Table
+              trackBy={(item) => item.name ?? "secret"}
+              header={<Header variant="h2">Secrets Manager</Header>}
+              items={aws?.secrets.items ?? []}
+              columnDefinitions={[
+                { id: "name", header: "Name", cell: (item) => <ConsoleLink href={item.console_url} label={item.name ?? "Secret"} /> },
+                { id: "changed", header: "Last changed", cell: (item) => fmt(item.last_changed_at) },
+                { id: "accessed", header: "Last accessed", cell: (item) => fmt(item.last_accessed_at) },
+                { id: "rotation", header: "Rotation", cell: (item) => item.rotation_enabled ? <StatusIndicator type="success">enabled</StatusIndicator> : <StatusIndicator type="warning">disabled</StatusIndicator> },
+              ]}
+            />
+          </SpaceBetween>
+        ) : null}
+
+        {activeSection === "labs" ? (
+          <ResourceTable
+            title="Labs"
+            description="Lab sessions with owner, lifecycle, TTL, cost, health, and admin intervention actions."
+            items={labsCollection.visible}
+            filteredCount={labsCollection.filtered.length}
+            page={labsCollection.page}
+            pageCount={labsCollection.pageCount}
+            setPage={labsCollection.setCurrentPageIndex}
+            pageSize={pageSize}
+            setPageSize={setPageSize}
+            loading={loading}
+            columnDefinitions={labColumns}
+            trackBy="instance_id"
+            filter={<ResourceFilter query={query} onChange={setQuery} count={labsCollection.filtered.length} properties={[
+              { key: "status", propertyLabel: "Status", groupValuesLabel: "Status values", operators: [":", "!="] },
+              { key: "owner", propertyLabel: "Owner", groupValuesLabel: "Owner values", operators: [":", "!="] },
+              { key: "template", propertyLabel: "Template", groupValuesLabel: "Template values", operators: [":", "!="] },
+            ]} />}
+            empty={<EmptyState title="No labs" detail="No lab sessions matched the current filter." />}
+          />
+        ) : null}
+
+        {activeSection === "users" ? (
+          <ResourceTable
+            title="Users"
+            description="Users, roles, credits, active labs, launch history, and usage cost."
+            items={usersCollection.visible}
+            filteredCount={usersCollection.filtered.length}
+            page={usersCollection.page}
+            pageCount={usersCollection.pageCount}
+            setPage={usersCollection.setCurrentPageIndex}
+            pageSize={pageSize}
+            setPageSize={setPageSize}
+            loading={loading}
+            columnDefinitions={userColumns}
+            trackBy="id"
+            filter={<ResourceFilter query={query} onChange={setQuery} count={usersCollection.filtered.length} properties={[
+              { key: "role", propertyLabel: "Role", groupValuesLabel: "Role values", operators: [":", "!="] },
+              { key: "status", propertyLabel: "Status", groupValuesLabel: "Status values", operators: [":", "!="] },
+              { key: "email", propertyLabel: "Email", groupValuesLabel: "Email values", operators: [":", "!="] },
+            ]} />}
+            empty={<EmptyState title="No users" detail="No users matched the current filter." />}
+          />
+        ) : null}
+
+        {activeSection === "billing" ? (
+          <SpaceBetween size="l">
+            <ColumnLayout columns={3}>
+              <Container header={<Header variant="h3">Cost Explorer</Header>}>{money(aws?.costs.total)} · {aws?.costs.period ?? "unavailable"}</Container>
+              <Container header={<Header variant="h3">Running EC2 estimate</Header>}>{money(instances.reduce((sum, item) => sum + (item.estimated_running_cost ?? 0), 0))}</Container>
+              <Container header={<Header variant="h3">Outstanding credits</Header>}>{overview?.credits.outstanding_balance.toFixed(1) ?? "0"}</Container>
+            </ColumnLayout>
+            <ColumnLayout columns={2}>
+              <Table
+                trackBy="service"
+                header={<Header variant="h2">Spend per AWS service</Header>}
+                items={aws?.costs.services ?? []}
+                columnDefinitions={[
+                  { id: "service", header: "Service", cell: (item) => item.service },
+                  { id: "amount", header: "Amount", cell: (item) => money(item.amount) },
+                ]}
+              />
+              <Table
+                trackBy="instance_id"
+                header={<Header variant="h2">Spend per lab</Header>}
+                items={labs}
+                columnDefinitions={[
+                  { id: "lab", header: "Lab", cell: (item) => item.template_title },
+                  { id: "owner", header: "Owner", cell: (item) => item.owner_email },
+                  { id: "cost", header: "Estimated cost", cell: (item) => money(item.estimated_aws_cost) },
+                ]}
+              />
+            </ColumnLayout>
+            <ResourceTable
+              title="Credit transactions"
+              description="Append-only credit ledger."
+              items={creditCollection.visible}
+              filteredCount={creditCollection.filtered.length}
+              page={creditCollection.page}
+              pageCount={creditCollection.pageCount}
+              setPage={creditCollection.setCurrentPageIndex}
+              pageSize={pageSize}
+              setPageSize={setPageSize}
+              loading={loading}
+              columnDefinitions={[
+                { id: "delta", header: "Delta", cell: (item) => item.delta >= 0 ? `+${item.delta}` : item.delta },
+                { id: "user", header: "User ID", cell: (item) => compact(item.user_id) },
+                { id: "reason", header: "Reason", cell: (item) => item.reason },
+                { id: "created", header: "Created", cell: (item) => fmt(item.created_at) },
+              ]}
+              trackBy="id"
+              filter={<ResourceFilter query={query} onChange={setQuery} count={creditCollection.filtered.length} properties={[
+                { key: "user", propertyLabel: "User", groupValuesLabel: "User values", operators: [":", "!="] },
+                { key: "reason", propertyLabel: "Reason", groupValuesLabel: "Reason values", operators: [":", "!="] },
+              ]} />}
+              empty={<EmptyState title="No credit transactions" detail="No credit ledger entries matched the current filter." />}
+            />
+          </SpaceBetween>
+        ) : null}
+
+        {activeSection === "jobs" ? (
+          <ResourceTable
+            title="Provisioning jobs"
+            description="Lifecycle jobs with current step, duration, resources, retries, errors, and cleanup status."
+            items={jobsCollection.visible}
+            filteredCount={jobsCollection.filtered.length}
+            page={jobsCollection.page}
+            pageCount={jobsCollection.pageCount}
+            setPage={jobsCollection.setCurrentPageIndex}
+            pageSize={pageSize}
+            setPageSize={setPageSize}
+            loading={loading}
+            columnDefinitions={jobColumns}
+            trackBy="id"
+            filter={<ResourceFilter query={query} onChange={setQuery} count={jobsCollection.filtered.length} properties={[
+              { key: "status", propertyLabel: "Status", groupValuesLabel: "Status values", operators: [":", "!="] },
+              { key: "cleanup", propertyLabel: "Cleanup", groupValuesLabel: "Cleanup values", operators: [":", "!="] },
+              { key: "slow", propertyLabel: "Slow", groupValuesLabel: "Slow values", operators: [":", "!="] },
+              { key: "owner", propertyLabel: "Owner", groupValuesLabel: "Owner values", operators: [":", "!="] },
+            ]} />}
+            empty={<EmptyState title="No jobs" detail="No provisioning jobs matched the current filter." />}
+          />
+        ) : null}
+
+        {activeSection === "logs" ? (
+          <SpaceBetween size="m">
+            <Container
+              header={
+                <Header
+                  variant="h2"
+                  actions={
+                    <SpaceBetween direction="horizontal" size="xs">
+                      <Select
+                        selectedOption={{ label: logService, value: logService }}
+                        onChange={({ detail }) => loadLogs((detail.selectedOption.value as "api" | "worker") ?? "worker")}
+                        options={[{ label: "api", value: "api" }, { label: "worker", value: "worker" }]}
+                      />
+                      <CopyToClipboard copyButtonText="Copy log tail" copyErrorText="Copy failed" copySuccessText="Copied" textToCopy={logs} />
+                      <ConsoleLink href={logService === "api" ? aws?.logs.api.console_url : aws?.logs.worker.console_url} label="Open CloudWatch" />
+                    </SpaceBetween>
+                  }
+                >
+                  CloudWatch log tail
+                </Header>
+              }
+            >
+              <FormField label="Readable log output" description="Filter-by-lab/user/resource is TODO until the backend exposes structured log search.">
+                <Textarea value={logs || "Select a service to load logs."} readOnly rows={24} />
+              </FormField>
+            </Container>
+          </SpaceBetween>
+        ) : null}
+
+        {activeSection === "settings" ? (
+          <ColumnLayout columns={2}>
+            <Container header={<Header variant="h2">Telemetry inputs</Header>}>
+              <KeyValuePairs items={[
+                { label: "Environment", value: process.env.NODE_ENV ?? "development" },
+                { label: "API URL", value: process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000" },
+                { label: "AWS region", value: aws?.region ?? "unavailable" },
+                { label: "ECS cluster", value: aws?.cluster ?? "unavailable" },
+                { label: "API log group", value: aws?.logs.api.name ?? "unavailable" },
+                { label: "Worker log group", value: aws?.logs.worker.name ?? "unavailable" },
+              ]} />
+            </Container>
+            <Container header={<Header variant="h2">Implemented actions</Header>}>
+              <SpaceBetween size="s">
+                <StatusIndicator type="success">Lab stop queues real backend teardown.</StatusIndicator>
+                <StatusIndicator type="success">TTL extension writes real lab event/state.</StatusIndicator>
+                <StatusIndicator type="success">Credit grants write the credit ledger.</StatusIndicator>
+                <StatusIndicator type="warning">EC2 reboot/terminate and SG remediation are TODO pending guarded backend endpoints.</StatusIndicator>
+              </SpaceBetween>
+            </Container>
+          </ColumnLayout>
+        ) : null}
+      </SpaceBetween>
+    </ContentLayout>
+  );
 
   if (user?.role !== "admin") {
     return (
-      <div className="mx-auto max-w-xl rounded-lg border border-border bg-card p-8 text-center">
-        <Shield className="mx-auto h-8 w-8 text-muted-foreground" />
-        <h1 className="mt-4 text-2xl text-foreground">Admin access required</h1>
-        <p className="mt-2 text-sm text-muted-foreground">
-          Your account is not marked as an Orchestryx administrator.
-        </p>
-      </div>
+      <Box padding="xxl">
+        <Alert type="error" header="Admin access required">
+          Your account is authenticated but is not marked as an Orchestrryx administrator.
+        </Alert>
+      </Box>
     );
   }
 
   return (
-    <div className="space-y-6">
-      <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-        <div>
-          <h1 className="text-3xl text-foreground">Admin Console</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Cloud operations, lab lifecycle, users, credits, failures, and provisioning events.
-          </p>
-        </div>
-        <Button type="button" variant="secondary" onClick={loadAdmin} disabled={isLoading}>
-          <RefreshCw className="h-4 w-4" />
-          Refresh
-        </Button>
-      </header>
-
-      {errorMessage ? (
-        <div className="rounded-lg border border-destructive/35 bg-destructive/10 px-4 py-3 text-sm text-red-300">
-          {errorMessage}
-        </div>
-      ) : null}
-
-      {isLoading && !overview ? (
-        <div className="grid gap-4 md:grid-cols-4">
-          {Array.from({ length: 4 }).map((_, index) => (
-            <Skeleton key={index} className="h-28 w-full" />
-          ))}
-        </div>
-      ) : (
-        <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-6">
-          <Metric icon={Server} label="Active labs" value={overview?.labs.active ?? 0} />
-          <Metric icon={Users} label="Users" value={overview?.users.total ?? 0} />
-          <Metric icon={Coins} label="Credits outstanding" value={overview?.credits.outstanding_balance.toFixed(1) ?? "0"} />
-          <Metric
-            icon={Cloud}
-            label="AWS lab stacks"
-            value={aws?.cloudformation.lab_stacks.length ?? 0}
-            tone={(aws?.cloudformation.lab_stacks ?? []).some((stack) => healthTone(stack.status) === "danger") ? "danger" : "default"}
-          />
-          <Metric
-            icon={ListChecks}
-            label="SQS queued"
-            value={(aws?.sqs.provision.queued ?? 0) + (aws?.sqs.destroy.queued ?? 0)}
-            tone={(aws?.sqs.provision.oldest_age_seconds ?? 0) > 300 ? "warning" : "default"}
-          />
-          <Metric
-            icon={AlertTriangle}
-            label="Failed labs"
-            value={overview?.labs.failed ?? failedLabs.length}
-            tone={(overview?.labs.failed ?? failedLabs.length) > 0 ? "danger" : "default"}
-          />
-        </section>
-      )}
-
-      <div className="flex gap-2 overflow-x-auto border-b border-border pb-2">
-        {(["aws", "labs", "users", "events", "credits"] as AdminTab[]).map((item) => (
-          <button
-            key={item}
-            type="button"
-            onClick={() => setTab(item)}
-            className={cn(
-              "h-9 shrink-0 rounded-lg px-3 text-sm capitalize",
-              tab === item
-                ? "bg-secondary text-foreground"
-                : "text-muted-foreground hover:bg-secondary hover:text-foreground"
-            )}
-          >
-            {item}
-          </button>
-        ))}
-      </div>
-
-      {tab === "aws" ? (
-        <motion.div
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="space-y-5"
-        >
-          {awsErrorMessage ? (
-            <div className="flex items-start gap-3 rounded-lg border border-amber-400/35 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
-              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-              <div>
-                <p className="text-foreground">AWS telemetry is unavailable.</p>
-                <p className="mt-1 text-muted-foreground">{awsErrorMessage}</p>
-              </div>
-            </div>
-          ) : null}
-          {!aws ? (
-            awsErrorMessage ? (
-              <section className="rounded-lg border border-border bg-card p-6">
-                <h2 className="text-xl text-foreground">Cloud overlay could not load</h2>
-                <p className="mt-2 text-sm text-muted-foreground">
-                  Core admin data is still available. Check AWS credentials, region, CloudWatch permissions, and the API logs, then refresh the console.
-                </p>
-              </section>
-            ) : (
-              <Skeleton className="h-72 w-full" />
-            )
-          ) : (
-            <>
-              <section className="overflow-hidden rounded-lg border border-border bg-card">
-                <div className="grid gap-6 border-b border-border p-5 xl:grid-cols-[1fr_auto] xl:items-center">
-                  <div>
-                    <div className="flex items-center gap-3">
-                      <div className="flex h-11 w-11 items-center justify-center rounded-lg border border-border bg-secondary text-primary">
-                        <Cloud className="h-5 w-5" />
-                      </div>
-                      <div>
-                        <h2 className="text-2xl text-foreground">Cloud Overlay</h2>
-                        <p className="text-sm text-muted-foreground">
-                          {aws.region} · ECS cluster {aws.cluster} · live AWS control-plane snapshot
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-3 gap-3 text-center sm:min-w-[28rem]">
-                    <div className="rounded-lg border border-border bg-secondary/45 p-3">
-                      <p className="text-xs text-muted-foreground">Alarms</p>
-                      <p className="mt-1 text-2xl text-foreground">{aws.alarms.firing}</p>
-                    </div>
-                    <div className="rounded-lg border border-border bg-secondary/45 p-3">
-                      <p className="text-xs text-muted-foreground">Stacks</p>
-                      <p className="mt-1 text-2xl text-foreground">{aws.cloudformation.lab_stacks.length}</p>
-                    </div>
-                    <div className="rounded-lg border border-border bg-secondary/45 p-3">
-                      <p className="text-xs text-muted-foreground">Monthly</p>
-                      <p className="mt-1 text-2xl text-foreground">${aws.costs.total.toFixed(2)}</p>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="grid gap-4 p-5 xl:grid-cols-[1.2fr_0.8fr]">
-                  <div className="relative overflow-hidden rounded-lg border border-border bg-[#0b0f17] p-4">
-                    <div className="absolute left-8 right-8 top-[5.6rem] hidden h-px bg-border xl:block" />
-                    <div className="absolute left-1/2 top-[5.6rem] hidden h-[8.7rem] w-px bg-border xl:block" />
-                    <div className="grid gap-4 xl:grid-cols-4">
-                      <CloudNode icon={Users} title="Cognito" detail={`${aws.cognito.estimated_users ?? 0} users`} status={aws.cognito.status} />
-                      <CloudNode icon={Route} title="SQS" detail={`${(aws.sqs.provision.queued ?? 0) + (aws.sqs.destroy.queued ?? 0)} queued`} status={(aws.sqs.provision.oldest_age_seconds ?? 0) > 300 ? "LAGGING" : "OK"} />
-                      <CloudNode icon={Server} title="ECS" detail={`${aws.ecs.tasks.length} tasks`} status={aws.ecs.api.rollout_state ?? aws.ecs.api.status} />
-                      <CloudNode icon={Database} title="Aurora" detail={aws.aurora.engine_version ?? "database"} status={aws.aurora.status} />
-                    </div>
-                    <div className="mt-4 grid gap-4 xl:grid-cols-4">
-                      <CloudNode icon={Network} title="Network" detail={`${aws.network.subnets.length} subnets`} status={aws.network.error ? "ERROR" : "OK"} />
-                      <CloudNode icon={Layers} title="CloudFormation" detail={`${aws.cloudformation.lab_stacks.length} lab stacks`} status={aws.cloudformation.lab_stacks.some((stack) => healthTone(stack.status) === "danger") ? "ATTENTION" : "OK"} />
-                      <CloudNode icon={HardDrive} title="EC2 Labs" detail={`${aws.ec2.lab_instances.length} hosts`} status={aws.ec2.lab_instances.some((item) => item.state === "pending") ? "STARTING" : "OK"} />
-                      <CloudNode icon={LockKeyhole} title="Secrets" detail={`${aws.secrets.count} tracked`} status={aws.secrets.error ? "ERROR" : "OK"} />
-                    </div>
-                  </div>
-
-                  <div className="rounded-lg border border-border bg-secondary/35 p-4">
-                    <h3 className="text-lg text-foreground">Operational Recommendations</h3>
-                    <div className="mt-4 space-y-3">
-                      {recommendations.map((item) => (
-                        <div
-                          key={item.title}
-                          className={cn(
-                            "rounded-lg border p-3",
-                            item.tone === "danger"
-                              ? "border-red-400/30 bg-red-500/10"
-                              : item.tone === "warning"
-                                ? "border-amber-400/30 bg-amber-500/10"
-                                : "border-border bg-card"
-                          )}
-                        >
-                          <p className="text-sm text-foreground">{item.title}</p>
-                          <p className="mt-1 text-xs leading-5 text-muted-foreground">{item.detail}</p>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              </section>
-
-              <section className="grid gap-4 xl:grid-cols-[1fr_1fr_1fr]">
-                <div className="rounded-lg border border-border bg-card p-4">
-                  <div className="flex items-center justify-between">
-                    <h3 className="text-lg text-foreground">Service Capacity</h3>
-                    <Cpu className="h-4 w-4 text-primary" />
-                  </div>
-                  <div className="mt-4 grid gap-4">
-                    {([
-                      ["API", aws.ecs.api, aws.metrics.ecs.api],
-                      ["Worker", aws.ecs.worker, aws.metrics.ecs.worker],
-                    ] as const).map(([label, service, metrics]) => (
-                      <div key={label} className="rounded-lg border border-border bg-secondary/45 p-3">
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="min-w-0">
-                            <p className="text-sm text-foreground">{label}</p>
-                            <p className="mono truncate text-xs text-muted-foreground">{service.task_definition ?? service.error ?? "No task definition"}</p>
-                          </div>
-                          <HealthPill value={service.rollout_state ?? service.status} />
-                        </div>
-                        <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
-                          <span className="text-muted-foreground">Run {service.running ?? 0}</span>
-                          <span className="text-muted-foreground">Want {service.desired ?? 0}</span>
-                          <span className="text-muted-foreground">Pend {service.pending ?? 0}</span>
-                        </div>
-                        <div className="mt-4 space-y-3">
-                          <UtilBar label="CPU" value={metrics?.CPUUtilization?.average} />
-                          <UtilBar label="Memory" value={metrics?.MemoryUtilization?.average} />
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="rounded-lg border border-border bg-card p-4">
-                  <div className="flex items-center justify-between">
-                    <h3 className="text-lg text-foreground">Queues</h3>
-                    <ListChecks className="h-4 w-4 text-primary" />
-                  </div>
-                  <div className="mt-4 grid gap-3">
-                    {([
-                      ["Provision", aws.sqs.provision],
-                      ["Destroy", aws.sqs.destroy],
-                    ] as Array<[string, AwsQueue]>).map(([label, queue]) => (
-                      <div key={label} className="rounded-lg border border-border bg-secondary/45 p-3">
-                        <div className="flex items-center justify-between">
-                          <span className="text-sm text-foreground">{label}</span>
-                          <span className="text-sm text-muted-foreground">{queue.in_flight ?? 0} in-flight</span>
-                        </div>
-                        <p className="mt-2 text-3xl text-foreground">{queue.queued ?? 0}</p>
-                        <p className="mono mt-1 truncate text-xs text-muted-foreground">{queue.name}</p>
-                        <p className="mt-1 text-xs text-muted-foreground">oldest {queue.oldest_age_seconds ?? 0}s</p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="rounded-lg border border-border bg-card p-4">
-                  <div className="flex items-center justify-between">
-                    <h3 className="text-lg text-foreground">Cost By Service</h3>
-                    <WalletCards className="h-4 w-4 text-primary" />
-                  </div>
-                  <div className="mt-4 space-y-3">
-                    {aws.costs.services.length ? (
-                      aws.costs.services.map((service) => {
-                        const max = Math.max(...aws.costs.services.map((item) => item.amount), 1);
-                        return (
-                          <div key={service.service}>
-                            <div className="flex items-center justify-between gap-3 text-xs">
-                              <span className="truncate text-muted-foreground">{service.service}</span>
-                              <span className="text-foreground">${service.amount.toFixed(2)}</span>
-                            </div>
-                            <div className="mt-2 h-2 overflow-hidden rounded-full bg-secondary">
-                              <div className="h-full rounded-full bg-primary" style={{ width: `${Math.max(4, (service.amount / max) * 100)}%` }} />
-                            </div>
-                          </div>
-                        );
-                      })
-                    ) : (
-                      <p className="text-sm text-muted-foreground">{aws.costs.error ?? "Cost Explorer data unavailable."}</p>
-                    )}
-                  </div>
-                </div>
-              </section>
-
-              <section className="grid gap-4 xl:grid-cols-4">
-                <div className="rounded-lg border border-border bg-card p-4">
-                  <div className="flex items-center justify-between">
-                    <h3 className="text-lg text-foreground">Images</h3>
-                    <Boxes className="h-4 w-4 text-primary" />
-                  </div>
-                  <div className="mt-4 space-y-3">
-                    {([
-                      ["API", aws.ecr.api],
-                      ["Worker", aws.ecr.worker],
-                    ] as Array<[string, AwsEcrImage]>).map(([label, image]) => (
-                      <div key={label} className="rounded-lg border border-border bg-secondary/45 p-3">
-                        <div className="flex items-center justify-between gap-3">
-                          <span className="text-sm text-foreground">{label}</span>
-                          <HealthPill value={image.status} />
-                        </div>
-                        <p className="mono mt-2 truncate text-xs text-muted-foreground">{image.repository}</p>
-                        <p className="mt-1 text-xs text-muted-foreground">
-                          {image.size_mb ?? 0} MB · pushed {fmt(image.pushed_at)}
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="rounded-lg border border-border bg-card p-4">
-                  <div className="flex items-center justify-between">
-                    <h3 className="text-lg text-foreground">Logs</h3>
-                    <Terminal className="h-4 w-4 text-primary" />
-                  </div>
-                  <div className="mt-4 space-y-3">
-                    {([
-                      ["API", aws.logs.api],
-                      ["Worker", aws.logs.worker],
-                    ] as Array<[string, AwsLogGroup]>).map(([label, group]) => (
-                      <div key={label} className="rounded-lg border border-border bg-secondary/45 p-3">
-                        <p className="text-sm text-foreground">{label}</p>
-                        <p className="mono mt-1 truncate text-xs text-muted-foreground">{group.name}</p>
-                        <p className="mt-1 text-xs text-muted-foreground">
-                          {group.stored_mb ?? 0} MB · latest {fmt(group.latest_event_at)}
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="rounded-lg border border-border bg-card p-4">
-                  <div className="flex items-center justify-between">
-                    <h3 className="text-lg text-foreground">Load Balancing</h3>
-                    <Gauge className="h-4 w-4 text-primary" />
-                  </div>
-                  <div className="mt-4 space-y-3">
-                    <div className="rounded-lg border border-border bg-secondary/45 p-3">
-                      <p className="text-sm text-muted-foreground">Load balancers</p>
-                      <p className="mt-1 text-3xl text-foreground">{aws.load_balancing.load_balancers.length}</p>
-                    </div>
-                    <div className="rounded-lg border border-border bg-secondary/45 p-3">
-                      <p className="text-sm text-muted-foreground">Target groups</p>
-                      <p className="mt-1 text-3xl text-foreground">{aws.load_balancing.target_groups.length}</p>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="rounded-lg border border-border bg-card p-4">
-                  <div className="flex items-center justify-between">
-                    <h3 className="text-lg text-foreground">Security</h3>
-                    <ShieldCheck className="h-4 w-4 text-primary" />
-                  </div>
-                  <div className="mt-4 space-y-3">
-                    <div className="rounded-lg border border-border bg-secondary/45 p-3">
-                      <p className="text-sm text-muted-foreground">IAM roles</p>
-                      <p className="mt-1 text-3xl text-foreground">{aws.iam.roles.length}</p>
-                    </div>
-                    <div className="rounded-lg border border-border bg-secondary/45 p-3">
-                      <p className="text-sm text-muted-foreground">Secrets</p>
-                      <p className="mt-1 text-3xl text-foreground">{aws.secrets.count}</p>
-                    </div>
-                  </div>
-                </div>
-              </section>
-
-              <section className="grid gap-4 xl:grid-cols-3">
-                <ResourceMiniTable
-                  title="Lab Stacks"
-                  icon={Cloud}
-                  empty="No active lab stacks."
-                  rows={aws.cloudformation.lab_stacks.map((stack) => ({
-                    id: stack.name ?? stack.error ?? "stack",
-                    primary: stack.name ?? "Stack unavailable",
-                    secondary: fmt(stack.created_at),
-                    status: stack.status,
-                  }))}
-                />
-                <ResourceMiniTable
-                  title="Lab EC2 Hosts"
-                  icon={HardDrive}
-                  empty="No tagged lab EC2 instances."
-                  rows={aws.ec2.lab_instances.map((instance) => ({
-                    id: instance.id ?? instance.error ?? "instance",
-                    primary: instance.id ?? "Instance unavailable",
-                    secondary: `${instance.type ?? "-"} · ${instance.public_ip ?? "no public IP"} · ${instance.az ?? "-"}`,
-                    status: instance.state ?? instance.status,
-                  }))}
-                />
-                <ResourceMiniTable
-                  title="Network"
-                  icon={Network}
-                  empty="No Orchestryx VPC resources discovered."
-                  rows={[
-                    ...aws.network.vpcs.map((vpc) => ({
-                      id: vpc.id ?? "vpc",
-                      primary: vpc.id ?? "VPC unavailable",
-                      secondary: `${vpc.cidr ?? "-"} · ${aws.network.subnets.filter((subnet) => subnet.vpc_id === vpc.id).length} subnets`,
-                      status: vpc.state,
-                    })),
-                    ...aws.network.security_groups.slice(0, 6).map((group) => ({
-                      id: group.id ?? "sg",
-                      primary: group.name ?? group.id ?? "Security group",
-                      secondary: `${group.ingress_rules ?? 0} ingress · ${group.egress_rules ?? 0} egress`,
-                      status: "OK",
-                    })),
-                  ]}
-                />
-              </section>
-
-              <section className="overflow-hidden rounded-lg border border-border bg-card">
-                <div className="flex flex-col gap-3 border-b border-border p-4 sm:flex-row sm:items-center sm:justify-between">
-                  <div>
-                    <h3 className="text-lg text-foreground">CloudWatch Tail</h3>
-                    <p className="text-sm text-muted-foreground">Recent ECS logs without leaving the admin console.</p>
-                  </div>
-                  <div className="flex gap-2">
-                    {(["api", "worker"] as const).map((service) => (
-                      <Button
-                        key={service}
-                        type="button"
-                        variant={awsLogService === service ? "primary" : "secondary"}
-                        size="sm"
-                        onClick={() => loadAwsLogs(service)}
-                      >
-                        <Terminal className="h-3.5 w-3.5" />
-                        {service}
-                      </Button>
-                    ))}
-                  </div>
-                </div>
-                <pre className="max-h-96 overflow-auto bg-[#06080d] p-4 text-xs leading-6 text-muted-foreground">
-                  {awsLogs || "Select a service to load logs."}
-                </pre>
-              </section>
-            </>
-          )}
-        </motion.div>
-      ) : null}
-
-      {tab === "labs" ? (
-        <section className="overflow-hidden rounded-lg border border-border bg-card">
-          {labs.map((lab) => (
-            <div key={lab.instance_id} className="grid gap-3 border-b border-border p-4 last:border-b-0 xl:grid-cols-[1fr_0.7fr_0.9fr_0.9fr_auto] xl:items-center">
-              <div className="min-w-0">
-                <p className="truncate text-sm text-foreground">{lab.template_title}</p>
-                <p className="mono truncate text-xs text-muted-foreground">{lab.instance_id}</p>
-                <p className="truncate text-xs text-muted-foreground">{lab.owner_email}</p>
-              </div>
-              <StatusBadge status={lab.status} />
-              <div className="text-sm text-muted-foreground">
-                <p>{lab.progress}%</p>
-                <p className="truncate">{lab.status_message}</p>
-              </div>
-              <div className="text-xs text-muted-foreground">
-                <p>{lab.ec2_public_ip ?? "No host yet"}</p>
-                <p>{formatDateTime(lab.started_at)}</p>
-              </div>
-              <Button
-                type="button"
-                variant="danger"
-                size="sm"
-                disabled={actionId === lab.instance_id}
-                onClick={() => stopLab(lab.instance_id)}
-              >
-                <Square className="h-3.5 w-3.5" />
-                Stop
-              </Button>
-            </div>
-          ))}
-        </section>
-      ) : null}
-
-      {tab === "users" ? (
-        <section className="overflow-hidden rounded-lg border border-border bg-card">
-          {users.map((row) => (
-            <div key={row.id} className="grid gap-3 border-b border-border p-4 last:border-b-0 lg:grid-cols-[1fr_0.4fr_0.5fr_0.5fr_auto] lg:items-center">
-              <div className="min-w-0">
-                <p className="truncate text-sm text-foreground">{row.email}</p>
-                <p className="mono truncate text-xs text-muted-foreground">{row.id}</p>
-              </div>
-              <span className="text-sm text-muted-foreground">{row.role}</span>
-              <span className="text-sm text-muted-foreground">{row.credits_balance} credits</span>
-              <span className="text-sm text-muted-foreground">{row.is_disabled ? "Disabled" : "Active"}</span>
-              <Button
-                type="button"
-                variant="secondary"
-                size="sm"
-                disabled={actionId === row.id}
-                onClick={() => addCredit(row)}
-              >
-                <Coins className="h-3.5 w-3.5" />
-                Add 5
-              </Button>
-            </div>
-          ))}
-        </section>
-      ) : null}
-
-      {tab === "events" ? (
-        <section className="overflow-hidden rounded-lg border border-border bg-card">
-          {events.map((event) => (
-            <div key={event.id} className="grid gap-2 border-b border-border p-4 last:border-b-0 lg:grid-cols-[0.7fr_0.7fr_1fr_2fr]">
-              <span className="text-xs uppercase text-muted-foreground">{event.level}</span>
-              <span className="text-xs text-muted-foreground">{event.phase}</span>
-              <span className="mono truncate text-xs text-muted-foreground">{event.instance_id}</span>
-              <div>
-                <p className="text-sm text-foreground">{event.message}</p>
-                <p className="text-xs text-muted-foreground">{formatDateTime(event.created_at)}</p>
-              </div>
-            </div>
-          ))}
-        </section>
-      ) : null}
-
-      {tab === "credits" ? (
-        <section className="overflow-hidden rounded-lg border border-border bg-card">
-          {credits.map((row) => (
-            <div key={row.id} className="grid gap-3 border-b border-border p-4 last:border-b-0 lg:grid-cols-[0.4fr_1fr_2fr_0.8fr]">
-              <span className={cn("text-sm", row.delta >= 0 ? "text-green-300" : "text-amber-300")}>
-                {row.delta >= 0 ? "+" : ""}{row.delta}
-              </span>
-              <span className="mono truncate text-xs text-muted-foreground">{row.user_id}</span>
-              <span className="text-sm text-foreground">{row.reason}</span>
-              <span className="text-xs text-muted-foreground">{formatDateTime(row.created_at)}</span>
-            </div>
-          ))}
-        </section>
-      ) : null}
-    </div>
+    <>
+      <TopNavigation
+        identity={{ href: "/admin", title: "Orchestrryx Admin" }}
+        utilities={[
+          { type: "button", text: process.env.NODE_ENV ?? "development", iconName: "settings" },
+          {
+            type: "menu-dropdown",
+            text: user?.email ?? "Admin",
+            description: user?.role ?? "admin",
+            iconName: "user-profile",
+            items: [
+              { id: "account", text: "Account" },
+              { id: "logout", text: "Logout" },
+            ],
+            onItemClick: ({ detail }) => {
+              if (detail.id === "logout") {
+                logout();
+                router.replace("/login");
+              }
+              if (detail.id === "account") router.push("/account");
+            },
+          },
+        ]}
+      />
+      <AppLayout
+        contentType="table"
+        navigation={navigation}
+        navigationOpen={navigationOpen}
+        onNavigationChange={({ detail }) => setNavigationOpen(detail.open)}
+        breadcrumbs={breadcrumbs}
+        content={loading && !overview ? <Box padding="xxl"><Spinner size="large" /> Loading admin console</Box> : content}
+        toolsOpen={toolsOpen}
+        onToolsChange={({ detail }) => setToolsOpen(detail.open)}
+        tools={
+          <HelpPanel header={<Header variant="h2">Admin console help</Header>}>
+            <SpaceBetween size="s">
+              <Box>Use resource tables with property filters to narrow AWS resources, labs, users, jobs, and credit ledger entries.</Box>
+              <Box>Open the split panel from any resource row to inspect metadata, ownership, links, and debug details without losing table context.</Box>
+              <Box>Destructive or costly actions require confirmations or are left as TODO until protected backend endpoints exist.</Box>
+            </SpaceBetween>
+          </HelpPanel>
+        }
+        splitPanel={<DetailSplitPanel resource={inspector} labs={labs} events={events} />}
+        splitPanelOpen={splitPanelOpen}
+        onSplitPanelToggle={({ detail }) => setSplitPanelOpen(detail.open)}
+        splitPanelPreferences={{ position: "side" }}
+        notifications={<Flashbar items={flashItems} />}
+      />
+      <Modal
+        visible={Boolean(confirmLab)}
+        onDismiss={() => setConfirmLab(null)}
+        header="Force stop lab?"
+        closeAriaLabel="Close modal"
+        footer={
+          <Box float="right">
+            <SpaceBetween direction="horizontal" size="xs">
+              <Button variant="link" onClick={() => setConfirmLab(null)}>Cancel</Button>
+              <Button variant="primary" loading={Boolean(actionId)} onClick={stopLab}>Queue teardown</Button>
+            </SpaceBetween>
+          </Box>
+        }
+      >
+        {confirmLab ? (
+          <SpaceBetween size="s">
+            <Alert type="warning">This marks the lab as destroying and queues the worker teardown flow.</Alert>
+            <KeyValuePairs items={[
+              { label: "Lab", value: confirmLab.template_title },
+              { label: "Instance ID", value: confirmLab.instance_id },
+              { label: "Owner", value: confirmLab.owner_email },
+              { label: "Current status", value: <Status value={String(confirmLab.status)} /> },
+            ]} />
+          </SpaceBetween>
+        ) : null}
+      </Modal>
+    </>
   );
 }

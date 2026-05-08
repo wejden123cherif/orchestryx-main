@@ -12,6 +12,7 @@ import type {
   LabEvent,
   LabStatusResponse,
   LabTemplate,
+  ProvisioningJob,
   CustomLabTopology,
   RefreshPayload,
   StartLabResponse,
@@ -220,6 +221,22 @@ export async function getAdminLabs(): Promise<AdminLab[]> {
 
 export async function adminStopLab(instanceId: string): Promise<StopLabResponse> {
   const response = await api.post<StopLabResponse>(`/admin/labs/${instanceId}/stop`);
+  return response.data;
+}
+
+export async function adminExtendLabTtl(
+  instanceId: string,
+  hours: number
+): Promise<{ instance_id: string; expires_at: string }> {
+  const response = await api.post<{ instance_id: string; expires_at: string }>(
+    `/admin/labs/${instanceId}/extend-ttl`,
+    { hours }
+  );
+  return response.data;
+}
+
+export async function getAdminProvisioningJobs(): Promise<ProvisioningJob[]> {
+  const response = await api.get<ProvisioningJob[]>("/admin/provisioning/jobs");
   return response.data;
 }
 

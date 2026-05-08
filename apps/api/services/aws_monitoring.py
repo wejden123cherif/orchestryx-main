@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from urllib.parse import quote
 
 import boto3
 from botocore.exceptions import BotoCoreError, ClientError
@@ -36,6 +37,44 @@ def _error(message: str, exc: Exception) -> dict[str, Any]:
         "status": "ERROR",
         "error": f"{message}: {exc.__class__.__name__}",
     }
+
+
+def _console_url(service: str, fragment: str = "", region: str = AWS_REGION) -> str:
+    base_region = "" if service == "iam" else f"?region={region}"
+    return f"https://{region}.console.aws.amazon.com/{service}/home{base_region}{fragment}"
+
+
+def _ec2_url(fragment: str) -> str:
+    return _console_url("ec2", fragment)
+
+
+def _tag_map(tags: list[dict[str, Any]] | None) -> dict[str, str]:
+    return {str(tag.get("Key")): str(tag.get("Value")) for tag in tags or [] if tag.get("Key")}
+
+
+def _hours_since(value: datetime | None) -> float | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return round((datetime.now(timezone.utc) - value.astimezone(timezone.utc)).total_seconds() / 3600, 2)
+
+
+def _estimate_instance_hourly_cost(instance_type: str | None) -> float | None:
+    rates = {
+        "t3.nano": 0.0052,
+        "t3.micro": 0.0104,
+        "t3.small": 0.0208,
+        "t3.medium": 0.0416,
+        "t3.large": 0.0832,
+        "t4g.nano": 0.0042,
+        "t4g.micro": 0.0084,
+        "t4g.small": 0.0168,
+        "t4g.medium": 0.0336,
+    }
+    if not instance_type:
+        return None
+    return rates.get(instance_type)
 
 
 def _ecs_service(ecs, service_name: str) -> dict[str, Any]:
@@ -123,6 +162,7 @@ def _queue(name: str) -> dict[str, Any]:
             "queued": int(attrs.get("ApproximateNumberOfMessages", 0)),
             "in_flight": int(attrs.get("ApproximateNumberOfMessagesNotVisible", 0)),
             "oldest_age_seconds": int(attrs.get("ApproximateAgeOfOldestMessage", 0)),
+            "console_url": _console_url("sqs", f"#/queues/{quote(url, safe='')}"),
         }
     except (BotoCoreError, ClientError, KeyError) as exc:
         return {"name": name, **_error("SQS queue unavailable", exc)}
@@ -182,6 +222,7 @@ def _ecr_image(repository_name: str) -> dict[str, Any]:
             "size_mb": round(latest.get("imageSizeInBytes", 0) / 1_048_576, 1),
             "digest": latest.get("imageDigest"),
             "tags": latest.get("imageTags", []),
+            "console_url": _console_url("ecr", f"#/repositories/private/{repository_name}"),
         }
     except (BotoCoreError, ClientError) as exc:
         return {"repository": repository_name, **_error("ECR image unavailable", exc)}
@@ -211,6 +252,7 @@ def _log_group(name: str) -> dict[str, Any]:
             "retention_days": match.get("retentionInDays"),
             "latest_stream": latest.get("logStreamName"),
             "latest_event_at": latest_at,
+            "console_url": _console_url("cloudwatch", f"#logsV2:log-groups/log-group/{quote(name, safe='')}"),
         }
     except (BotoCoreError, ClientError) as exc:
         return {"name": name, **_error("CloudWatch logs unavailable", exc)}
@@ -239,6 +281,7 @@ def _lab_stacks() -> list[dict[str, Any]]:
                             "status": stack.get("StackStatus"),
                             "created_at": _utc(stack.get("CreationTime")),
                             "updated_at": _utc(stack.get("LastUpdatedTime")),
+                            "console_url": _console_url("cloudformation", f"#/stacks?filteringText={quote(stack.get('StackName', ''), safe='')}"),
                         }
                     )
         return sorted(stacks, key=lambda item: item.get("created_at") or "", reverse=True)
@@ -259,23 +302,107 @@ def _lab_instances() -> list[dict[str, Any]]:
         instances = []
         for reservation in response.get("Reservations", []):
             for instance in reservation.get("Instances", []):
-                tags = {tag["Key"]: tag["Value"] for tag in instance.get("Tags", [])}
+                tags = _tag_map(instance.get("Tags"))
+                security_groups = [
+                    {"id": group.get("GroupId"), "name": group.get("GroupName")}
+                    for group in instance.get("SecurityGroups", [])
+                ]
+                volume_ids = [
+                    mapping.get("Ebs", {}).get("VolumeId")
+                    for mapping in instance.get("BlockDeviceMappings", [])
+                    if mapping.get("Ebs", {}).get("VolumeId")
+                ]
+                hourly = _estimate_instance_hourly_cost(instance.get("InstanceType"))
+                uptime_hours = _hours_since(instance.get("LaunchTime"))
                 instances.append(
                     {
                         "id": instance.get("InstanceId"),
                         "name": tags.get("Name", instance.get("InstanceId")),
                         "lab_instance_id": tags.get("InstanceId"),
+                        "stack_name": tags.get("aws:cloudformation:stack-name") or tags.get("StackName"),
+                        "managed_by": tags.get("ManagedBy"),
                         "state": instance.get("State", {}).get("Name"),
                         "type": instance.get("InstanceType"),
+                        "image_id": instance.get("ImageId"),
                         "public_ip": instance.get("PublicIpAddress"),
                         "private_ip": instance.get("PrivateIpAddress"),
                         "az": instance.get("Placement", {}).get("AvailabilityZone"),
+                        "vpc_id": instance.get("VpcId"),
+                        "subnet_id": instance.get("SubnetId"),
+                        "security_groups": security_groups,
+                        "iam_instance_profile": instance.get("IamInstanceProfile", {}).get("Arn"),
+                        "volume_ids": volume_ids,
+                        "tags": tags,
                         "launched_at": _utc(instance.get("LaunchTime")),
+                        "uptime_hours": uptime_hours,
+                        "estimated_hourly_cost": hourly,
+                        "estimated_running_cost": round(hourly * uptime_hours, 2) if hourly and uptime_hours else None,
+                        "console_url": _ec2_url(f"#InstanceDetails:instanceId={instance.get('InstanceId')}"),
                     }
                 )
         return instances
     except (BotoCoreError, ClientError) as exc:
         return [{"status": "ERROR", "error": f"EC2 unavailable: {exc.__class__.__name__}"}]
+
+
+def _rule_targets(permission: dict[str, Any]) -> list[dict[str, str]]:
+    targets: list[dict[str, str]] = []
+    for item in permission.get("IpRanges", []):
+        targets.append({"type": "ipv4", "value": item.get("CidrIp", ""), "description": item.get("Description", "")})
+    for item in permission.get("Ipv6Ranges", []):
+        targets.append({"type": "ipv6", "value": item.get("CidrIpv6", ""), "description": item.get("Description", "")})
+    for item in permission.get("PrefixListIds", []):
+        targets.append({"type": "prefix-list", "value": item.get("PrefixListId", ""), "description": item.get("Description", "")})
+    for item in permission.get("UserIdGroupPairs", []):
+        targets.append({"type": "security-group", "value": item.get("GroupId", ""), "description": item.get("Description", "")})
+    return [target for target in targets if target["value"]]
+
+
+def _port_label(permission: dict[str, Any]) -> str:
+    protocol = permission.get("IpProtocol", "-1")
+    if protocol == "-1":
+        return "all"
+    from_port = permission.get("FromPort")
+    to_port = permission.get("ToPort")
+    if from_port is None and to_port is None:
+        return "all"
+    return str(from_port) if from_port == to_port else f"{from_port}-{to_port}"
+
+
+def _security_rule(direction: str, permission: dict[str, Any], attached_count: int) -> dict[str, Any]:
+    protocol = permission.get("IpProtocol", "-1")
+    from_port = permission.get("FromPort")
+    to_port = permission.get("ToPort")
+    targets = _rule_targets(permission)
+    public_targets = {target["value"] for target in targets if target["value"] in {"0.0.0.0/0", "::/0"}}
+    admin_ports = {22, 3389, 5900, 2375, 2376, 5432, 3306, 6379, 8000, 8080, 8443}
+    reasons: list[str] = []
+
+    if direction == "ingress" and public_targets:
+        if protocol == "-1":
+            reasons.append("Public inbound access to all protocols.")
+        elif from_port is not None and to_port is not None and any(from_port <= port <= to_port for port in admin_ports):
+            reasons.append("Public inbound access includes an administrative or database port.")
+        elif from_port == 0 and to_port == 65535:
+            reasons.append("Public inbound access spans every TCP/UDP port.")
+
+    if direction == "egress" and public_targets and protocol == "-1":
+        reasons.append("Allows all outbound traffic to the public internet.")
+
+    if attached_count == 0:
+        reasons.append("Security group is not attached to any network interface.")
+
+    risk = "high" if any("Public inbound" in reason for reason in reasons) else "medium" if reasons else "low"
+    return {
+        "direction": direction,
+        "protocol": protocol,
+        "ports": _port_label(permission),
+        "from_port": from_port,
+        "to_port": to_port,
+        "targets": targets,
+        "risk": risk,
+        "explanation": " ".join(reasons) if reasons else "Scoped rule with no obvious public exposure.",
+    }
 
 
 def _network() -> dict[str, Any]:
@@ -302,24 +429,70 @@ def _network() -> dict[str, Any]:
                     "cidr": subnet.get("CidrBlock"),
                     "available_ips": subnet.get("AvailableIpAddressCount"),
                     "public_ip_on_launch": subnet.get("MapPublicIpOnLaunch"),
+                    "console_url": _ec2_url(f"#SubnetDetails:subnetId={subnet.get('SubnetId')}"),
                 }
                 for subnet in subnet_resp.get("Subnets", [])
             ]
 
             sg_resp = ec2.describe_security_groups(Filters=[{"Name": "vpc-id", "Values": vpc_ids}])
-            security_groups = [
-                {
-                    "id": group.get("GroupId"),
-                    "name": group.get("GroupName"),
-                    "description": group.get("Description"),
-                    "vpc_id": group.get("VpcId"),
-                    "ingress_rules": len(group.get("IpPermissions", [])),
-                    "egress_rules": len(group.get("IpPermissionsEgress", [])),
-                }
-                for group in sg_resp.get("SecurityGroups", [])
-                if "orchestryx" in group.get("GroupName", "").lower()
-                or "orchestryx" in group.get("Description", "").lower()
-            ]
+            network_interfaces = ec2.describe_network_interfaces(
+                Filters=[{"Name": "vpc-id", "Values": vpc_ids}]
+            ).get("NetworkInterfaces", [])
+            sg_attachments: dict[str, list[dict[str, Any]]] = {}
+            for interface in network_interfaces:
+                attachment = interface.get("Attachment", {})
+                for group in interface.get("Groups", []):
+                    sg_attachments.setdefault(group.get("GroupId", ""), []).append(
+                        {
+                            "network_interface_id": interface.get("NetworkInterfaceId"),
+                            "instance_id": attachment.get("InstanceId"),
+                            "private_ip": interface.get("PrivateIpAddress"),
+                            "status": interface.get("Status"),
+                            "description": interface.get("Description"),
+                        }
+                    )
+
+            security_groups = []
+            for group in sg_resp.get("SecurityGroups", []):
+                tags = _tag_map(group.get("Tags"))
+                is_relevant = (
+                    "orchestryx" in group.get("GroupName", "").lower()
+                    or "orchestryx" in group.get("Description", "").lower()
+                    or tags.get("Project") == "orchestryx"
+                    or tags.get("ManagedBy", "").startswith("orchestryx")
+                )
+                if not is_relevant:
+                    continue
+
+                attachments = sg_attachments.get(group.get("GroupId", ""), [])
+                ingress = [
+                    _security_rule("ingress", permission, len(attachments))
+                    for permission in group.get("IpPermissions", [])
+                ]
+                egress = [
+                    _security_rule("egress", permission, len(attachments))
+                    for permission in group.get("IpPermissionsEgress", [])
+                ]
+                rules = [*ingress, *egress]
+                risk_score = sum(3 if rule["risk"] == "high" else 1 if rule["risk"] == "medium" else 0 for rule in rules)
+                security_groups.append(
+                    {
+                        "id": group.get("GroupId"),
+                        "name": group.get("GroupName"),
+                        "description": group.get("Description"),
+                        "vpc_id": group.get("VpcId"),
+                        "owner_id": group.get("OwnerId"),
+                        "ingress_rules": len(ingress),
+                        "egress_rules": len(egress),
+                        "rules": rules,
+                        "attachments": attachments,
+                        "attached_count": len(attachments),
+                        "tags": tags,
+                        "risk_score": risk_score,
+                        "risk_level": "high" if risk_score >= 3 else "medium" if risk_score > 0 else "low",
+                        "console_url": _ec2_url(f"#SecurityGroup:groupId={group.get('GroupId')}"),
+                    }
+                )
 
             rt_resp = ec2.describe_route_tables(Filters=[{"Name": "vpc-id", "Values": vpc_ids}])
             route_tables = [
@@ -328,6 +501,7 @@ def _network() -> dict[str, Any]:
                     "vpc_id": table.get("VpcId"),
                     "routes": len(table.get("Routes", [])),
                     "associations": len(table.get("Associations", [])),
+                    "console_url": _ec2_url(f"#RouteTableDetails:RouteTableId={table.get('RouteTableId')}"),
                 }
                 for table in rt_resp.get("RouteTables", [])
             ]
@@ -339,6 +513,7 @@ def _network() -> dict[str, Any]:
                     "cidr": vpc.get("CidrBlock"),
                     "state": vpc.get("State"),
                     "is_default": vpc.get("IsDefault"),
+                    "console_url": _ec2_url(f"#VpcDetails:VpcId={vpc.get('VpcId')}"),
                 }
                 for vpc in vpcs
             ],
@@ -363,6 +538,8 @@ def _load_balancing() -> dict[str, Any]:
                 "state": lb.get("State", {}).get("Code"),
                 "vpc_id": lb.get("VpcId"),
                 "azs": [az.get("ZoneName") for az in lb.get("AvailabilityZones", [])],
+                "security_groups": lb.get("SecurityGroups", []),
+                "console_url": _ec2_url(f"#LoadBalancer:loadBalancerArn={quote(lb.get('LoadBalancerArn', ''), safe='')}"),
             }
             for lb in elbv2.describe_load_balancers().get("LoadBalancers", [])
             if "orchestryx" in lb.get("LoadBalancerName", "").lower()
@@ -376,6 +553,8 @@ def _load_balancing() -> dict[str, Any]:
                 "target_type": tg.get("TargetType"),
                 "vpc_id": tg.get("VpcId"),
                 "health_check_path": tg.get("HealthCheckPath"),
+                "health_check_protocol": tg.get("HealthCheckProtocol"),
+                "console_url": _ec2_url(f"#TargetGroup:targetGroupArn={quote(tg.get('TargetGroupArn', ''), safe='')}"),
             }
             for tg in elbv2.describe_target_groups().get("TargetGroups", [])
             if "orchestryx" in tg.get("TargetGroupName", "").lower()
@@ -446,6 +625,7 @@ def _secrets() -> dict[str, Any]:
                         "last_accessed_at": _utc(secret.get("LastAccessedDate")),
                         "rotation_enabled": secret.get("RotationEnabled", False),
                         "deleted_at": _utc(secret.get("DeletedDate")),
+                        "console_url": _console_url("secretsmanager", f"#!/secret?name={quote(secret.get('Name', ''), safe='')}"),
                     }
                 )
             if len(items) >= 50:
@@ -466,13 +646,19 @@ def _iam() -> dict[str, Any]:
                 if "orchestryx" not in role_name.lower():
                     continue
                 attached = iam.list_attached_role_policies(RoleName=role_name).get("AttachedPolicies", [])
+                inline_names = iam.list_role_policies(RoleName=role_name).get("PolicyNames", [])
                 roles.append(
                     {
                         "name": role_name,
                         "arn": role.get("Arn"),
                         "created_at": _utc(role.get("CreateDate")),
                         "attached_policies": len(attached),
+                        "attached_policy_names": [policy.get("PolicyName") for policy in attached],
+                        "inline_policies": len(inline_names),
+                        "inline_policy_names": inline_names,
                         "max_session_duration": role.get("MaxSessionDuration"),
+                        "last_used_at": _utc(role.get("RoleLastUsed", {}).get("LastUsedDate")),
+                        "console_url": f"https://console.aws.amazon.com/iam/home#/roles/details/{quote(role_name, safe='')}",
                     }
                 )
             if len(roles) >= 30:

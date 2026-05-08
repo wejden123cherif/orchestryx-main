@@ -155,6 +155,8 @@ export interface AdminUser {
   subscription_tier: string;
   max_active_labs: number | null;
   created_at: string;
+  active_labs?: number;
+  total_labs?: number;
 }
 
 export interface AdminLab {
@@ -167,12 +169,21 @@ export interface AdminLab {
   progress: number;
   status_message: string;
   failure_reason: string | null;
+  retry_count?: number;
   cfn_stack_name: string | null;
   ec2_public_ip: string | null;
+  instance_type?: string;
+  credits_cost?: number;
+  ttl_hours?: number;
+  runtime_hours?: number;
+  estimated_aws_cost?: number | null;
   expires_at: string | null;
   started_at: string;
+  provisioning_started_at?: string | null;
   ready_at: string | null;
+  last_status_at?: string | null;
   destroyed_at: string | null;
+  cleanup_required?: boolean;
 }
 
 export interface CreditTransaction {
@@ -181,6 +192,30 @@ export interface CreditTransaction {
   delta: number;
   reason: string;
   created_at: string;
+}
+
+export interface ProvisioningJob {
+  id: string;
+  lab_id: string;
+  template_title: string;
+  owner_email: string;
+  owner_id: string;
+  status: LabStatus;
+  current_step: string;
+  progress: number;
+  error: string | null;
+  retries: number;
+  started_at: string;
+  provisioning_started_at: string | null;
+  finished_at: string | null;
+  duration_hours: number;
+  resource_ids: {
+    cloudformation_stack: string | null;
+    public_ip: string | null;
+    secrets_key: string | null;
+  };
+  cleanup_status: string;
+  is_slow: boolean;
 }
 
 export interface AwsOverview {
@@ -316,6 +351,7 @@ export interface AwsQueue {
   queued?: number;
   in_flight?: number;
   oldest_age_seconds?: number;
+  console_url?: string;
   status?: string;
   error?: string;
 }
@@ -327,6 +363,7 @@ export interface AwsEcrImage {
   size_mb?: number;
   digest?: string;
   tags?: string[];
+  console_url?: string;
   error?: string;
 }
 
@@ -336,6 +373,7 @@ export interface AwsLogGroup {
   retention_days?: number | null;
   latest_stream?: string | null;
   latest_event_at?: string | null;
+  console_url?: string;
   status?: string;
   error?: string;
 }
@@ -345,6 +383,7 @@ export interface AwsStack {
   status: string;
   created_at?: string | null;
   updated_at?: string | null;
+  console_url?: string;
   error?: string;
 }
 
@@ -352,12 +391,25 @@ export interface AwsInstance {
   id?: string;
   name?: string;
   lab_instance_id?: string;
+  stack_name?: string;
+  managed_by?: string;
   state?: string;
   type?: string;
+  image_id?: string;
   public_ip?: string | null;
   private_ip?: string | null;
   az?: string;
+  vpc_id?: string;
+  subnet_id?: string;
+  security_groups?: Array<{ id?: string; name?: string }>;
+  iam_instance_profile?: string;
+  volume_ids?: string[];
+  tags?: Record<string, string>;
   launched_at?: string | null;
+  uptime_hours?: number | null;
+  estimated_hourly_cost?: number | null;
+  estimated_running_cost?: number | null;
+  console_url?: string;
   status?: string;
   error?: string;
 }
@@ -376,6 +428,7 @@ export interface AwsVpc {
   cidr?: string;
   state?: string;
   is_default?: boolean;
+  console_url?: string;
 }
 
 export interface AwsSubnet {
@@ -385,6 +438,7 @@ export interface AwsSubnet {
   cidr?: string;
   available_ips?: number;
   public_ip_on_launch?: boolean;
+  console_url?: string;
 }
 
 export interface AwsSecurityGroup {
@@ -392,8 +446,35 @@ export interface AwsSecurityGroup {
   name?: string;
   description?: string;
   vpc_id?: string;
+  owner_id?: string;
   ingress_rules?: number;
   egress_rules?: number;
+  rules?: AwsSecurityGroupRule[];
+  attachments?: AwsSecurityGroupAttachment[];
+  attached_count?: number;
+  tags?: Record<string, string>;
+  risk_score?: number;
+  risk_level?: "low" | "medium" | "high" | string;
+  console_url?: string;
+}
+
+export interface AwsSecurityGroupRule {
+  direction: "ingress" | "egress" | string;
+  protocol: string;
+  ports: string;
+  from_port?: number | null;
+  to_port?: number | null;
+  targets: Array<{ type: string; value: string; description?: string }>;
+  risk: "low" | "medium" | "high" | string;
+  explanation: string;
+}
+
+export interface AwsSecurityGroupAttachment {
+  network_interface_id?: string;
+  instance_id?: string;
+  private_ip?: string;
+  status?: string;
+  description?: string;
 }
 
 export interface AwsRouteTable {
@@ -401,6 +482,7 @@ export interface AwsRouteTable {
   vpc_id?: string;
   routes?: number;
   associations?: number;
+  console_url?: string;
 }
 
 export interface AwsLoadBalancer {
@@ -412,6 +494,8 @@ export interface AwsLoadBalancer {
   state?: string;
   vpc_id?: string;
   azs?: string[];
+  security_groups?: string[];
+  console_url?: string;
 }
 
 export interface AwsTargetGroup {
@@ -422,6 +506,8 @@ export interface AwsTargetGroup {
   target_type?: string;
   vpc_id?: string;
   health_check_path?: string;
+  health_check_protocol?: string;
+  console_url?: string;
 }
 
 export interface AwsTargetHealth {
@@ -454,6 +540,7 @@ export interface AwsSecret {
   last_accessed_at?: string | null;
   rotation_enabled?: boolean;
   deleted_at?: string | null;
+  console_url?: string;
 }
 
 export interface AwsIamRole {
@@ -461,7 +548,12 @@ export interface AwsIamRole {
   arn?: string;
   created_at?: string | null;
   attached_policies?: number;
+  attached_policy_names?: string[];
+  inline_policies?: number;
+  inline_policy_names?: string[];
   max_session_duration?: number;
+  last_used_at?: string | null;
+  console_url?: string;
 }
 
 export interface AwsMetricPoint {

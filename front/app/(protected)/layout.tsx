@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { ProtectedShell } from "@/components/dashboard/protected-shell";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/hooks/useAuth";
@@ -13,6 +13,7 @@ export default function ProtectedLayout({
   children: React.ReactNode;
 }>) {
   const router = useRouter();
+  const pathname = usePathname();
   const { isAuthReady, isAuthenticated } = useAuth();
 
   useEffect(() => {
@@ -35,6 +36,10 @@ export default function ProtectedLayout({
         </div>
       </div>
     );
+  }
+
+  if (pathname?.startsWith("/admin")) {
+    return <>{children}</>;
   }
 
   return <ProtectedShell>{children}</ProtectedShell>;

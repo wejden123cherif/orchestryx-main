@@ -5,6 +5,7 @@ import { ToastProvider } from "@/components/ui/toast";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import "./globals.css";
 import "@xyflow/react/dist/style.css";
+import "@cloudscape-design/global-styles/index.css";
 
 const inter = Inter({
   variable: "--font-inter",
