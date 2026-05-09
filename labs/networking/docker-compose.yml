@@ -1,0 +1,9 @@
+services:
+  networking:
+    build: .
+    container_name: networking-lab
+    environment:
+      - FLAG=FLAG{local_test_flag}
+    ports:
+      - "80:80"
+    restart: unless-stopped

@@ -1,0 +1,10 @@
+services:
+  dfir:
+    build: .
+    container_name: dfir-lab
+    environment:
+      - FLAG=unused   # flag is inside the .vmem file
+    ports:
+      - "3000:3000"
+      - "2222:22"
+    restart: unless-stopped

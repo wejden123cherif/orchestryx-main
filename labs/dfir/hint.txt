@@ -1,0 +1,18 @@
+================================================
+  MemoryGhost — Windows Memory Forensics
+================================================
+
+You have a memory dump from a compromised Windows machine.
+Use Volatility 3 to find out what happened.
+
+The `vol` command is pre-configured. Examples:
+
+  vol windows.pslist          → list running processes
+  vol windows.cmdline         → command-line arguments per process
+  vol windows.filescan        → files open in memory
+  vol windows.netscan         → network connections
+  vol windows.hashdump        → NTLM password hashes
+
+The flag format is: FLAG{...}
+It is hidden inside this memory image. Find it.
+================================================

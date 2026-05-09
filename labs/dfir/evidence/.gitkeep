@@ -1,0 +1,3 @@
+Place MemLab1.vmem here before running docker build.
+Download from: https://github.com/stuxnet999/MemLabs
+This folder is in .gitignore — the .vmem file must never be committed.
