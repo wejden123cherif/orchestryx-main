@@ -9,6 +9,6 @@ Current contents:
 
 Future use:
 
-- Replace broad AWS managed policies with scoped custom policies for SQS, CloudFormation/CDK, EC2 lab resources, Secrets Manager, and CloudWatch.
+- Replace broad AWS managed policies with scoped custom policies for SQS and the platform resources each service actually uses.
 - Add permissions boundaries when the deployment is split across separate dev, staging, and production accounts.
 - Keep IAM inputs reviewed carefully because these files define the AWS blast radius of the platform.

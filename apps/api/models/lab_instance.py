@@ -35,15 +35,13 @@ class LabInstance(Base):
     failure_reason = Column(Text, nullable=True)
     retry_count = Column(Integer, nullable=False, default=0)
 
-    # CloudFormation stack name - used to destroy the lab
-    # Format: orchestryx-lab-{instance_id}
+    # Legacy CloudFormation stack name. Retained for older rows only.
     cfn_stack_name = Column(String, nullable=True)
 
-    # Public IP of the EC2 instance - set when lab is READY
+    # Legacy public IP field. Retained for older rows only.
     ec2_public_ip = Column(String, nullable=True)
 
-    # Key in AWS Secrets Manager where WireGuard .conf is stored
-    # Set when lab is READY
+    # Runtime access secret key. Retained for future runtime use and older rows.
     secrets_key = Column(String, nullable=True)
 
     # Whether the user has submitted the correct flag

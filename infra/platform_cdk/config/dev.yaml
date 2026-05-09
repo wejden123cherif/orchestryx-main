@@ -1,0 +1,52 @@
+aws:
+  account: "${CDK_DEFAULT_ACCOUNT}"
+  region: "${CDK_DEFAULT_REGION}"
+naming:
+  stack_prefix: orchestryx-platform
+  stack_name_prefix: OrchestryxDev
+  resource_prefix: orchestryx-dev
+network:
+  cidr: 10.80.0.0/16
+  max_azs: 2
+  nat_gateways: 1
+ecr:
+  api_repository_name: orchestryx-dev-api
+  worker_repository_name: orchestryx-dev-worker
+database:
+  # Enabled in dev so the full Orchestryx control plane can be brought up from
+  # platform CDK. Keep prod/staging choices separate in their own config files.
+  enabled: true
+  database_name: orchestryx
+  cluster_identifier: orchestryx-dev-db
+  min_acu: 0.5
+  max_acu: 2
+  backup_retention_days: 7
+queues:
+  provision_queue_name: orchestryx-dev-provision-lab
+  destroy_queue_name: orchestryx-dev-destroy-lab
+auth:
+  user_pool_name: orchestryx-dev-users
+  app_client_name: orchestryx-dev-web
+ecs:
+  cluster_name: orchestryx-dev
+  # Enabled in dev for end-to-end platform validation. In a clean account,
+  # deploy ECR/foundation stacks and push initial images before deploying this
+  # stack, otherwise ECS tasks cannot pull images.
+  services_enabled: true
+  api_service_name: orchestryx-dev-api-service
+  worker_service_name: orchestryx-dev-worker-service
+  api_container_port: 8000
+  desired_count: 1
+  cpu: 512
+  memory_mib: 1024
+  runtime_secret_name: orchestryx/dev/api/env
+dns:
+  private_zone_name: orchestryx.internal
+vpn:
+  enabled: false
+  instance_type: t3.micro
+  private_dns_name: vpn.orchestryx.internal
+observability:
+  api_log_group_name: /ecs/orchestryx-dev-api
+  worker_log_group_name: /ecs/orchestryx-dev-worker
+  retention_days: 30

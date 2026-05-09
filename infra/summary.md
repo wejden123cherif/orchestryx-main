@@ -6,7 +6,7 @@ Key files and folders:
 
 - `app.py`: CDK app entry point.
 - `cdk.json`: CDK runtime configuration.
-- `orchestryx_infra/`: CDK stack package.
+- `platform_cdk/`: active AWS platform CDK app.
 - `tests/`: CDK unit tests.
 
 Future use:

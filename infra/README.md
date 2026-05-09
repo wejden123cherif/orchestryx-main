@@ -1,19 +1,23 @@
 # Orchestryx Infra
 
-This folder is the in-repo AWS CDK app used by the Orchestryx worker to create and destroy lab environments.
+`infra/platform_cdk/` is the only active infrastructure-as-code entry point for Orchestryx.
 
-The backend worker calls `cdk deploy` and `cdk destroy` with this directory as `CDK_INFRA_PATH`. In Docker/ECS, the worker image copies this folder into the image so deployments do not depend on a separate sibling repository or host volume.
+The removed per-lab EC2 CDK app is no longer part of this repository. Workers no longer shell out to `cdk deploy` or `cdk destroy` for lab stacks, and lab runtime provisioning is disabled until a new runtime is implemented.
 
-Current lab stacks create one isolated VPC and one EC2 host per lab. That is simple and isolated, but slow for short web labs because the host installs packages and pulls images during first boot. The next production speed step is a golden AMI or warm pool; see `docs/provisioning.md`.
+Current structure:
 
-## Local CDK Setup
+- `apps/api`: FastAPI backend.
+- `apps/web`: Next.js frontend.
+- `workers`: async background services.
+- `infra/platform_cdk`: AWS platform infrastructure.
+- `labs`: lab image source folders kept for future use.
+- `alembic`: database migrations.
+
+## Platform CDK
 
 ```bash
-cd infra
-python -m venv .venv
-.venv\Scripts\activate
-pip install -r ..\requirements.txt
-cdk synth
+cd infra/platform_cdk
+cdk synth -c env=dev
 ```
 
-`cdk.context.json`, `.venv`, and `cdk.out` are generated local artifacts and should not be committed.
+See `infra/platform_cdk/README.md` for environment config, deployment safety, and the map from legacy/manual AWS resources to platform CDK stacks.

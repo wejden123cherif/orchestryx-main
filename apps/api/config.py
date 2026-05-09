@@ -45,38 +45,53 @@ def _int(name: str, default: int) -> int:
         raise ConfigError(f"Invalid integer environment variable: {name}") from exc
 
 
-# Database
+# ── Database ─────────────────────────────────────────────────────────────────
 DATABASE_URL = _required("DATABASE_URL")
 SQL_ECHO = _bool("SQL_ECHO", default=False)
 # Set to 'require' for Aurora production, 'disable' for local Docker Compose.
 DB_SSL_MODE = os.getenv("DB_SSL_MODE", "disable")
 
-# AWS
+# ── AWS core ─────────────────────────────────────────────────────────────────
 AWS_REGION = _required("AWS_REGION")
+# AWS account ID — used to construct ECR URIs and CDK environment.
+# Required in production; optional locally (CDK uses CDK_DEFAULT_ACCOUNT as
+# a fallback when this is absent).
+AWS_ACCOUNT_ID = _optional("AWS_ACCOUNT_ID", "")
+
+# ── Cognito ───────────────────────────────────────────────────────────────────
 COGNITO_USER_POOL_ID = _required("COGNITO_USER_POOL_ID")
 COGNITO_APP_CLIENT_ID = _required("COGNITO_APP_CLIENT_ID")
+
+# JWKS cache TTL in seconds.  After this many seconds the cached public keys
+# are considered stale and will be refreshed on the next request.
+# Default: 3600 (1 hour).  Cognito rotates keys infrequently but does rotate.
+COGNITO_JWKS_TTL_SECONDS = _int("COGNITO_JWKS_TTL_SECONDS", 3600)
+
+# ── SQS ───────────────────────────────────────────────────────────────────────
 SQS_PROVISION_URL = _required("SQS_PROVISION_URL")
 SQS_DESTROY_URL = _required("SQS_DESTROY_URL")
 
-# API
+# ── API ───────────────────────────────────────────────────────────────────────
 CORS_ALLOWED_ORIGINS = _csv("CORS_ALLOWED_ORIGINS", "http://localhost:3000")
 
-# Celery / SQS
+# ── Celery / SQS queue names ──────────────────────────────────────────────────
 PROVISION_QUEUE = _optional("PROVISION_QUEUE", "orchestryx-provision-lab")
 DESTROY_QUEUE = _optional("DESTROY_QUEUE", "orchestryx-destroy-lab")
 
-# Lab provisioning
-CDK_INFRA_PATH = os.getenv("CDK_INFRA_PATH", "infra")
-WG_DNS = _optional("WG_DNS", "1.1.1.1")
+# ── Lab runtime ───────────────────────────────────────────────────────────────
+# Lab deployment is currently disabled while the platform itself is moved to
+# infra/platform_cdk. Keep /labs/start controlled instead of attempting to
+# invoke the removed per-lab CDK path.
+LAB_RUNTIME_ENABLED = _bool("LAB_RUNTIME_ENABLED", default=False)
 LAB_MAX_ACTIVE_PER_USER = _int("LAB_MAX_ACTIVE_PER_USER", 2)
 LAB_PROVISION_TIMEOUT_SECONDS = _int("LAB_PROVISION_TIMEOUT_SECONDS", 900)
 LAB_STARTUP_RETRY_SECONDS = _int("LAB_STARTUP_RETRY_SECONDS", 30)
 LAB_CLEANUP_STUCK_AFTER_SECONDS = _int("LAB_CLEANUP_STUCK_AFTER_SECONDS", 1200)
 LAB_RETENTION_DAYS = _int("LAB_RETENTION_DAYS", 14)
 
-# AWS monitoring defaults. These mirror the local cockpit defaults but can be
-# overridden per environment so the admin console is not tied to one account.
-AWS_ACCOUNT_ID = _optional("AWS_ACCOUNT_ID", "")
+# ── AWS monitoring defaults ───────────────────────────────────────────────────
+# These mirror the status CLI defaults but can be overridden per environment
+# so the admin console is not tied to one account.
 AWS_ECS_CLUSTER = _optional("AWS_ECS_CLUSTER", "orchestryx")
 AWS_API_SERVICE = _optional("AWS_API_SERVICE", "orchestryx-api-service")
 AWS_WORKER_SERVICE = _optional("AWS_WORKER_SERVICE", "orchestryx-worker-service")

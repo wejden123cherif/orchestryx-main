@@ -9,20 +9,55 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U orchestryx"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ── One-shot migration runner ─────────────────────────────────────────────
+  # Run this before starting the API for the first time or after pulling
+  # changes that include new Alembic revisions:
+  #
+  #   docker compose run --rm migrate
+  #
+  # In CI / ECS the equivalent command is:
+  #   alembic upgrade head
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://orchestryx:password@db:5432/orchestryx
+      DB_SSL_MODE: disable
+      # Remaining vars are not needed for migrations but config.py requires them.
+      AWS_REGION: ${AWS_REGION:-eu-central-1}
+      COGNITO_USER_POOL_ID: ${COGNITO_USER_POOL_ID:-local}
+      COGNITO_APP_CLIENT_ID: ${COGNITO_APP_CLIENT_ID:-local}
+      SQS_PROVISION_URL: ${SQS_PROVISION_URL:-https://sqs.eu-central-1.amazonaws.com/000000000000/orchestryx-provision-lab}
+      SQS_DESTROY_URL: ${SQS_DESTROY_URL:-https://sqs.eu-central-1.amazonaws.com/000000000000/orchestryx-destroy-lab}
+    command: ["alembic", "upgrade", "head"]
+    # Do not restart — this is a one-shot job.
+    restart: "no"
 
   api:
     build:
       context: .
       dockerfile: Dockerfile
     depends_on:
-      - db
+      db:
+        condition: service_healthy
     ports:
       - "8000:8000"
     environment:
       DATABASE_URL: postgresql://orchestryx:password@db:5432/orchestryx
+      DB_SSL_MODE: disable
       SQL_ECHO: ${SQL_ECHO:-false}
       AWS_REGION: ${AWS_REGION:-eu-central-1}
-      AWS_ACCOUNT_ID: ${AWS_ACCOUNT_ID:-254076817005}
+      AWS_ACCOUNT_ID: ${AWS_ACCOUNT_ID:-}
       COGNITO_USER_POOL_ID: ${COGNITO_USER_POOL_ID}
       COGNITO_APP_CLIENT_ID: ${COGNITO_APP_CLIENT_ID}
       SQS_PROVISION_URL: ${SQS_PROVISION_URL}
@@ -30,13 +65,13 @@ services:
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:3000}
       PROVISION_QUEUE: ${PROVISION_QUEUE:-orchestryx-provision-lab}
       DESTROY_QUEUE: ${DESTROY_QUEUE:-orchestryx-destroy-lab}
-      CDK_INFRA_PATH: ${CDK_INFRA_PATH:-infra}
-      WG_DNS: ${WG_DNS:-1.1.1.1}
+      LAB_RUNTIME_ENABLED: ${LAB_RUNTIME_ENABLED:-false}
       LAB_MAX_ACTIVE_PER_USER: ${LAB_MAX_ACTIVE_PER_USER:-2}
       LAB_PROVISION_TIMEOUT_SECONDS: ${LAB_PROVISION_TIMEOUT_SECONDS:-900}
       LAB_STARTUP_RETRY_SECONDS: ${LAB_STARTUP_RETRY_SECONDS:-30}
       LAB_CLEANUP_STUCK_AFTER_SECONDS: ${LAB_CLEANUP_STUCK_AFTER_SECONDS:-1200}
       LAB_RETENTION_DAYS: ${LAB_RETENTION_DAYS:-14}
+      COGNITO_JWKS_TTL_SECONDS: ${COGNITO_JWKS_TTL_SECONDS:-3600}
       AWS_ECS_CLUSTER: ${AWS_ECS_CLUSTER:-orchestryx}
       AWS_API_SERVICE: ${AWS_API_SERVICE:-orchestryx-api-service}
       AWS_WORKER_SERVICE: ${AWS_WORKER_SERVICE:-orchestryx-worker-service}
@@ -49,26 +84,29 @@ services:
       AWS_VPC_ID: ${AWS_VPC_ID:-}
     volumes:
       - ~/.aws:/root/.aws:ro
+    # The API no longer runs migrations on startup.  Run the 'migrate' service
+    # first, or use `docker compose run --rm migrate` before `docker compose up api`.
 
   worker:
     build:
       context: .
       dockerfile: Dockerfile.worker
     depends_on:
-      - db
+      db:
+        condition: service_healthy
     environment:
       DATABASE_URL: postgresql://orchestryx:password@db:5432/orchestryx
+      DB_SSL_MODE: disable
       SQL_ECHO: ${SQL_ECHO:-false}
       AWS_REGION: ${AWS_REGION:-eu-central-1}
-      AWS_ACCOUNT_ID: ${AWS_ACCOUNT_ID:-254076817005}
+      AWS_ACCOUNT_ID: ${AWS_ACCOUNT_ID:-}
       COGNITO_USER_POOL_ID: ${COGNITO_USER_POOL_ID}
       COGNITO_APP_CLIENT_ID: ${COGNITO_APP_CLIENT_ID}
       SQS_PROVISION_URL: ${SQS_PROVISION_URL}
       SQS_DESTROY_URL: ${SQS_DESTROY_URL}
       PROVISION_QUEUE: ${PROVISION_QUEUE:-orchestryx-provision-lab}
       DESTROY_QUEUE: ${DESTROY_QUEUE:-orchestryx-destroy-lab}
-      CDK_INFRA_PATH: ${CDK_INFRA_PATH:-infra}
-      WG_DNS: ${WG_DNS:-1.1.1.1}
+      LAB_RUNTIME_ENABLED: ${LAB_RUNTIME_ENABLED:-false}
       LAB_MAX_ACTIVE_PER_USER: ${LAB_MAX_ACTIVE_PER_USER:-2}
       LAB_PROVISION_TIMEOUT_SECONDS: ${LAB_PROVISION_TIMEOUT_SECONDS:-900}
       LAB_STARTUP_RETRY_SECONDS: ${LAB_STARTUP_RETRY_SECONDS:-30}

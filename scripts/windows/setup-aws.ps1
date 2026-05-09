@@ -4,6 +4,9 @@ if (Get-Variable PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyCo
 }
 
 <#
+Legacy/manual bootstrap helper. Prefer infra/platform_cdk/ for active
+infrastructure changes.
+
 Idempotent one-time AWS setup for Orchestryx.
 This documents and automates the resources that were already created in the
 current eu-central-1 account. It is safe to run again: existing resources are
@@ -322,8 +325,7 @@ function Ensure-Secret {
         SQS_PROVISION_URL = "https://sqs.eu-central-1.amazonaws.com/254076817005/orchestryx-provision-lab"
         SQS_DESTROY_URL = "https://sqs.eu-central-1.amazonaws.com/254076817005/orchestryx-destroy-lab"
         CORS_ALLOWED_ORIGINS = "http://localhost:3000"
-        CDK_INFRA_PATH = "infra"
-        WG_DNS = "1.1.1.1"
+        LAB_RUNTIME_ENABLED = "false"
     } | ConvertTo-Json -Compress
 
     $tmp = New-TemporaryFile
@@ -546,10 +548,6 @@ Ensure-PolicyAttached $ApiTaskRole "arn:aws:iam::aws:policy/SecretsManagerReadWr
 
 Ensure-Role $WorkerTaskRole
 Ensure-PolicyAttached $WorkerTaskRole "arn:aws:iam::aws:policy/AmazonSQSFullAccess"
-Ensure-PolicyAttached $WorkerTaskRole "arn:aws:iam::aws:policy/AWSCloudFormationFullAccess"
-Ensure-PolicyAttached $WorkerTaskRole "arn:aws:iam::aws:policy/AmazonEC2FullAccess"
-Ensure-PolicyAttached $WorkerTaskRole "arn:aws:iam::aws:policy/SecretsManagerReadWrite"
-Ensure-PolicyAttached $WorkerTaskRole "arn:aws:iam::aws:policy/CloudWatchFullAccess"
 
 Write-Section "Security groups"
 $ApiSgId = Resolve-OrCreateSecurityGroup $ApiSgId $ApiSgName "Orchestryx API"

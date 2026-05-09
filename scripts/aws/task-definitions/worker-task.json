@@ -29,6 +29,10 @@
         {
           "name": "PYTHONUNBUFFERED",
           "value": "1"
+        },
+        {
+          "name": "LAB_RUNTIME_ENABLED",
+          "value": "false"
         }
       ],
       "secrets": [
@@ -79,14 +83,6 @@
         {
           "name": "CORS_ALLOWED_ORIGINS",
           "valueFrom": "arn:aws:secretsmanager:eu-central-1:254076817005:secret:orchestryx/api/env-J7WB6D:CORS_ALLOWED_ORIGINS::"
-        },
-        {
-          "name": "CDK_INFRA_PATH",
-          "valueFrom": "arn:aws:secretsmanager:eu-central-1:254076817005:secret:orchestryx/api/env-J7WB6D:CDK_INFRA_PATH::"
-        },
-        {
-          "name": "WG_DNS",
-          "valueFrom": "arn:aws:secretsmanager:eu-central-1:254076817005:secret:orchestryx/api/env-J7WB6D:WG_DNS::"
         }
       ],
       "logConfiguration": {

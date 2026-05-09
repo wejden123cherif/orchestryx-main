@@ -2,7 +2,7 @@
 
 Admins can manage Orchestryx through the frontend `/admin` page and protected `/admin/*` API routes.
 
-The admin UI is migrated in-place to AWS Cloudscape Design System. It lives at `front/app/(protected)/admin/page.tsx`, but the protected layout bypasses the normal user shell for `/admin` so the page can use Cloudscape `TopNavigation` and `AppLayout` without nesting inside the student dashboard navigation.
+The admin UI is migrated in-place to AWS Cloudscape Design System. It lives at `apps/web/app/(protected)/admin/page.tsx`, but the protected layout bypasses the normal user shell for `/admin` so the page can use Cloudscape `TopNavigation` and `AppLayout` without nesting inside the student dashboard navigation.
 
 Cloudscape dependencies are installed in the existing frontend app:
 
@@ -10,7 +10,7 @@ Cloudscape dependencies are installed in the existing frontend app:
 - `@cloudscape-design/global-styles`
 - `@cloudscape-design/collection-hooks`
 
-Cloudscape global styles are imported from `front/app/layout.tsx`.
+Cloudscape global styles are imported from `apps/web/app/layout.tsx`.
 
 ## Access Control
 
@@ -64,11 +64,11 @@ docker compose up --build
 Start the frontend:
 
 ```powershell
-cd D:\dev\orchestryx\orchestryx-main\front
+cd D:\dev\orchestryx\orchestryx-main\apps\web
 npm run dev
 ```
 
-Open `http://localhost:3000/admin`. The frontend reads `NEXT_PUBLIC_API_URL` from `front/.env.local`; the default local value is `http://localhost:8000`.
+Open `http://localhost:3000/admin`. The frontend reads `NEXT_PUBLIC_API_URL` from `apps/web/.env.local`; the default local value is `http://localhost:8000`.
 
 The backend still enforces admin access. The frontend role check is only a UI guard.
 
@@ -90,7 +90,7 @@ Cost estimates inside lab and EC2 views use a small local instance-price map for
 
 ## Adding New Admin Pages
 
-1. Add a new entry to the `AdminSection` union and `sectionLabels` in `front/app/(protected)/admin/page.tsx`.
+1. Add a new entry to the `AdminSection` union and `sectionLabels` in `apps/web/app/(protected)/admin/page.tsx`.
 2. Add a `SideNavigation` link.
 3. Prefer Cloudscape `Table` with `PropertyFilter`, `Pagination`, `CollectionPreferences`, and `SplitPanel` detail content.
 4. Reuse existing `/admin/*` API contracts where possible. If a backend action is missing, render a disabled Cloudscape action with a clear TODO rather than fake data.

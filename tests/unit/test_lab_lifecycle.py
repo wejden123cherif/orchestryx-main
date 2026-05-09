@@ -1,4 +1,5 @@
 import os
+import asyncio
 
 os.environ.setdefault("DATABASE_URL", "postgresql://user:pass@localhost:5432/orchestryx")
 os.environ.setdefault("AWS_REGION", "eu-central-1")
@@ -17,6 +18,8 @@ from apps.api.services.lab_lifecycle import (  # noqa: E402
     STOPPABLE_LAB_STATUSES,
     normalize_lab_status,
 )
+from fastapi import HTTPException  # noqa: E402
+from apps.api.api.labs import StartLabRequest, start_lab  # noqa: E402
 
 
 def test_legacy_statuses_are_normalized_for_api_clients():
@@ -33,3 +36,20 @@ def test_startup_statuses_are_active_and_stoppable():
 
     assert LAB_STATUS_QUEUED in STOPPABLE_LAB_STATUSES
     assert LAB_STATUS_STARTING in STOPPABLE_LAB_STATUSES
+
+
+def test_start_lab_returns_controlled_501_when_runtime_disabled():
+    async def call_start_lab():
+        await start_lab(
+            StartLabRequest(template_id="web-sqli-01"),
+            user={"sub": "local-user"},
+            db=None,
+        )
+
+    try:
+        asyncio.run(call_start_lab())
+    except HTTPException as exc:
+        assert exc.status_code == 501
+        assert "Lab runtime is disabled" in str(exc.detail)
+    else:
+        raise AssertionError("start_lab should reject requests while runtime is disabled")

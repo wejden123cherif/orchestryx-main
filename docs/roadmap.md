@@ -13,7 +13,7 @@ Implemented:
 - Celery workers backed by SQS.
 - Provision and destroy worker modules.
 - In-repo CDK app under `infra/`.
-- Dockerfiles, Docker Compose, ECS task definitions, setup/deploy scripts, and local cockpit.
+- Dockerfiles, Docker Compose, ECS task definitions, setup/deploy scripts, and AWS status CLI.
 
 ## Active Work
 
@@ -52,4 +52,4 @@ Phase 4: platform operations.
 - Multi-environment account separation.
 - Least-privilege IAM.
 - Automated rollback.
-- Richer cockpit with alarms, traces, and cost anomaly visibility.
+- Richer AWS status CLI with alarms, traces, and cost anomaly visibility.

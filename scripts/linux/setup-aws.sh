@@ -1,24 +1,33 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Legacy/manual bootstrap helper. Prefer infra/platform_cdk/ for active
+# infrastructure changes.
+#
 # Idempotent one-time AWS setup for Orchestryx.
 # This documents and automates the resources that were already created in the
 # current eu-central-1 account. It is safe to run again: existing resources are
 # detected and skipped where practical.
 
-AWS_REGION="eu-central-1"
-AWS_ACCOUNT_ID="254076817005"
+AWS_REGION="${AWS_REGION:-eu-central-1}"
+
+# Resolve account ID from the environment or STS so the script works across
+# accounts without hardcoding.
+if [[ -z "${AWS_ACCOUNT_ID:-}" ]]; then
+  AWS_ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
+fi
+
 ECS_CLUSTER="orchestryx"
-VPC_ID="vpc-0d10f5a5902d4ffd4"
-SUBNETS=("subnet-09b0a64b46e90bf03" "subnet-0f3460c06ddf5ecc9" "subnet-0ff556deb9702ca2a")
+VPC_ID="${AWS_VPC_ID:-vpc-0d10f5a5902d4ffd4}"
+SUBNETS=("${ORCHESTRYX_SUBNET_1:-subnet-09b0a64b46e90bf03}" "${ORCHESTRYX_SUBNET_2:-subnet-0f3460c06ddf5ecc9}" "${ORCHESTRYX_SUBNET_3:-subnet-0ff556deb9702ca2a}")
 
 API_REPO="orchestryx-api"
 WORKER_REPO="orchestryx-worker"
 SECRET_NAME="orchestryx/api/env"
-SECRET_ARN="arn:aws:secretsmanager:${AWS_REGION}:${AWS_ACCOUNT_ID}:secret:orchestryx/api/env-J7WB6D"
-AURORA_ENDPOINT="orchestryx-db.cluster-cz86ciucmlhr.eu-central-1.rds.amazonaws.com"
-AURORA_CLUSTER="orchestryx-db"
-AURORA_INSTANCE="orchestryx-db-writer"
+SECRET_ARN="${ORCHESTRYX_SECRET_ARN:-}"
+AURORA_ENDPOINT="${ORCHESTRYX_AURORA_ENDPOINT:-orchestryx-db.cluster-placeholder.${AWS_REGION}.rds.amazonaws.com}"
+AURORA_CLUSTER="${AWS_AURORA_CLUSTER:-orchestryx-db}"
+AURORA_INSTANCE="${ORCHESTRYX_AURORA_INSTANCE:-orchestryx-db-writer}"
 AURORA_DB_NAME="orchestryx"
 AURORA_SUBNET_GROUP="orchestryx-db-subnets"
 AURORA_MIN_CAPACITY="0.5"
@@ -34,10 +43,10 @@ WORKER_TASK_FILE="scripts/aws/task-definitions/worker-task.json"
 API_SG_NAME="orchestryx-api-sg"
 WORKER_SG_NAME="orchestryx-worker-sg"
 ALB_SG_NAME="orchestryx-alb-sg"
-API_SG_ID="sg-0205b75f583ebfa25"
-WORKER_SG_ID="sg-0db089ffb994e8272"
-ALB_SG_ID=""
-AURORA_SG_ID="sg-0088ffc271e2fa353"
+API_SG_ID="${ORCHESTRYX_API_SG:-}"
+WORKER_SG_ID="${ORCHESTRYX_WORKER_SG:-}"
+ALB_SG_ID="${ORCHESTRYX_ALB_SG:-}"
+AURORA_SG_ID="${ORCHESTRYX_AURORA_SG:-}"
 
 API_LOG_GROUP="/ecs/orchestryx-api"
 WORKER_LOG_GROUP="/ecs/orchestryx-worker"
@@ -349,6 +358,9 @@ ensure_secret() {
   DB_USER="${db_user}" \
   DB_PASSWORD="${db_password}" \
   COGNITO_CLIENT_ID="${cognito_client_id}" \
+  AWS_ACCOUNT_ID_VAL="${AWS_ACCOUNT_ID}" \
+  AWS_REGION_VAL="${AWS_REGION}" \
+  COGNITO_POOL_VAL="${COGNITO_POOL:-}" \
   python - <<'PY' > "${tmp_secret}"
 import json
 import os
@@ -358,24 +370,25 @@ database_url = (
     + os.environ["DB_USER"]
     + ":"
     + os.environ["DB_PASSWORD"]
-    + "@orchestryx-db.cluster-cz86ciucmlhr.eu-central-1.rds.amazonaws.com:5432/orchestryx"
+    + "@orchestryx-db.cluster-placeholder."
+    + os.environ["AWS_REGION_VAL"]
+    + ".rds.amazonaws.com:5432/orchestryx"
 )
 
 print(json.dumps({
     "DATABASE_URL": database_url,
     "SQL_ECHO": "false",
     "DB_SSL_MODE": "require",
-    "AWS_REGION": "eu-central-1",
-    "AWS_ACCOUNT_ID": "254076817005",
-    "COGNITO_USER_POOL_ID": "eu-central-1_FCduBIpFa",
+    "AWS_REGION": os.environ["AWS_REGION_VAL"],
+    "AWS_ACCOUNT_ID": os.environ["AWS_ACCOUNT_ID_VAL"],
+    "COGNITO_USER_POOL_ID": os.environ.get("COGNITO_POOL_VAL", ""),
     "COGNITO_APP_CLIENT_ID": os.environ["COGNITO_CLIENT_ID"],
     "PROVISION_QUEUE": "orchestryx-provision-lab",
     "DESTROY_QUEUE": "orchestryx-destroy-lab",
-    "SQS_PROVISION_URL": "https://sqs.eu-central-1.amazonaws.com/254076817005/orchestryx-provision-lab",
-    "SQS_DESTROY_URL": "https://sqs.eu-central-1.amazonaws.com/254076817005/orchestryx-destroy-lab",
+    "SQS_PROVISION_URL": "https://sqs." + os.environ["AWS_REGION_VAL"] + ".amazonaws.com/" + os.environ["AWS_ACCOUNT_ID_VAL"] + "/orchestryx-provision-lab",
+    "SQS_DESTROY_URL": "https://sqs." + os.environ["AWS_REGION_VAL"] + ".amazonaws.com/" + os.environ["AWS_ACCOUNT_ID_VAL"] + "/orchestryx-destroy-lab",
     "CORS_ALLOWED_ORIGINS": "http://localhost:3000",
-    "CDK_INFRA_PATH": "infra",
-    "WG_DNS": "1.1.1.1"
+    "LAB_RUNTIME_ENABLED": "false"
 }))
 PY
 
@@ -580,10 +593,6 @@ ensure_policy_attached "${API_TASK_ROLE}" "arn:aws:iam::aws:policy/SecretsManage
 
 ensure_role "${WORKER_TASK_ROLE}"
 ensure_policy_attached "${WORKER_TASK_ROLE}" "arn:aws:iam::aws:policy/AmazonSQSFullAccess"
-ensure_policy_attached "${WORKER_TASK_ROLE}" "arn:aws:iam::aws:policy/AWSCloudFormationFullAccess"
-ensure_policy_attached "${WORKER_TASK_ROLE}" "arn:aws:iam::aws:policy/AmazonEC2FullAccess"
-ensure_policy_attached "${WORKER_TASK_ROLE}" "arn:aws:iam::aws:policy/SecretsManagerReadWrite"
-ensure_policy_attached "${WORKER_TASK_ROLE}" "arn:aws:iam::aws:policy/CloudWatchFullAccess"
 
 section "Security groups"
 API_SG_ID="$(discover_or_create_sg "${API_SG_ID}" "${API_SG_NAME}" "Orchestryx API")"

@@ -1,6 +1,12 @@
 # AWS Deployment Assets
 
-This folder contains version-controlled AWS inputs used by the setup and deployment scripts. It keeps resource definitions close to the code without mixing them into the executable shell scripts.
+This folder contains version-controlled AWS inputs used by the legacy/manual setup scripts. It keeps resource definitions close to the code without mixing them into executable shell scripts.
+
+These manifests are now legacy/manual infrastructure references. The long-lived platform foundation is owned by `infra/platform_cdk/`; keep these files for comparison and migration until the CDK app has imported or replaced the live resources safely.
+
+The app deploy scripts do not consume these manifests. `scripts/linux/deploy.sh`
+and `scripts/windows/deploy.ps1` read CDK-exported environment values, push
+images to ECR, and update existing ECS services only.
 
 Current contents:
 

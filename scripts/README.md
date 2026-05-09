@@ -10,10 +10,10 @@ Current contents:
 
 OS-specific scripts:
 
-- `linux/deploy.sh`: builds API and worker images, pushes them to ECR, forces ECS redeployments, and prints the ALB URL when present.
-- `linux/setup-aws.sh`: idempotent one-time AWS setup script for Bash environments, including the public API ALB.
-- `windows/deploy.ps1`: PowerShell equivalent of the Bash deploy script.
-- `windows/setup-aws.ps1`: PowerShell equivalent of the Bash setup script.
+- `linux/deploy.sh`: builds API and worker images, pushes them to CDK-created ECR repositories, and updates existing ECS services.
+- `linux/setup-aws.sh`: legacy/manual AWS bootstrap reference. Prefer `infra/platform_cdk/`.
+- `windows/deploy.ps1`: PowerShell equivalent of the Bash app deploy script.
+- `windows/setup-aws.ps1`: legacy/manual AWS bootstrap reference. Prefer `infra/platform_cdk/`.
 
 AWS asset folders:
 

@@ -5,8 +5,8 @@ This folder contains synchronous Celery workers for lab lifecycle jobs.
 Key files:
 
 - `celery_app.py`: Celery configuration using SQS as broker.
-- `provision.py`: CDK deploy, WireGuard config generation, Secrets Manager write, and lab status update.
-- `destroy.py`: CDK destroy, generated secret cleanup, and lab status update.
+- `provision.py`: disabled lab-runtime task path that records controlled failures and refunds credits.
+- `destroy.py`: DB-only cleanup for expired, stale, and stopped lab rows.
 
 Future use:
 

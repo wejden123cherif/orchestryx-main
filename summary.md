@@ -1,6 +1,6 @@
 # Repository Summary
 
-This repository is the Orchestryx backend monorepo. It contains the API, workers, CDK infrastructure, deployment scripts, local operations cockpit, and project documentation.
+This repository is the Orchestryx monorepo. It contains the web frontend, API, workers, CDK infrastructure, deployment scripts, AWS status CLI, and project documentation.
 
 Key files:
 

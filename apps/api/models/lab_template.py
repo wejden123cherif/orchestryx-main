@@ -7,13 +7,14 @@ class LabTemplate(Base):
     """
     Represents a lab template in the catalog.
     Each row is one type of lab available to users.
-    We insert these manually - adding a new lab = write CDK stack + insert row here.
+    We insert these manually. Runtime deployment is disabled until the next
+    lab runtime is implemented.
     """
 
     __tablename__ = "lab_templates"
 
     # Unique slug used as primary key - e.g. "web-sqli-01"
-    # Human-readable, used in API URLs and CDK stack names
+    # Human-readable, used in API URLs and future runtime names
     id = Column(String, primary_key=True)
 
     # Display information shown in the catalog
@@ -26,21 +27,19 @@ class LabTemplate(Base):
     credits_cost = Column(Integer, nullable=False, default=1)   # credits deducted on start
     ttl_hours = Column(Integer, nullable=False, default=2)       # hours before auto-destroy
 
-    # AWS deployment config
+    # Runtime image config
     # docker_image_uri: full ECR URI of the challenge container
     # e.g. "123456789.dkr.ecr.eu-central-1.amazonaws.com/sqli-lab:latest"
     docker_image_uri = Column(String, nullable=False)
 
-    # cdk_stack_class: Python class name in infra/stacks/
-    # Celery worker uses this to know which CDK stack to deploy
+    # Retained for schema compatibility with older rows. The removed per-lab
+    # CDK app is no longer invoked by workers.
     cdk_stack_class = Column(String, nullable=False)
 
-    # EC2 instance type for this lab
-    # t3.small for most labs, t3.medium for Windows (EternalBlue)
+    # Retained for future runtime sizing decisions.
     instance_type = Column(String, nullable=False, default="t3.small")
 
-    # Where the lab challenge is reachable from inside the WireGuard VPN.
-    # The host and container port are the same for current single-container labs.
+    # Where the lab challenge should be reachable once a runtime exists.
     challenge_port = Column(Integer, nullable=False, default=3000)
     challenge_path = Column(String, nullable=False, default="/")
 

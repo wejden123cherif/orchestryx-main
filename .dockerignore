@@ -12,3 +12,7 @@ infra/.cdk.staging
 __pycache__
 **/__pycache__/
 *.pyc
+node_modules
+**/node_modules/
+.next
+**/.next/

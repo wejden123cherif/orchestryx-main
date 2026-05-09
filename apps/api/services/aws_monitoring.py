@@ -274,7 +274,9 @@ def _lab_stacks() -> list[dict[str, Any]]:
         stacks = []
         for page in paginator.paginate(StackStatusFilter=statuses):
             for stack in page.get("StackSummaries", []):
-                if stack.get("StackName", "").startswith("orchestryx-lab-"):
+                if stack.get("StackName", "").startswith(
+                    ("OrchestryxDev-", "OrchestryxStaging-", "OrchestryxProd-")
+                ):
                     stacks.append(
                         {
                             "name": stack.get("StackName"),

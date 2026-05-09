@@ -1,6 +1,6 @@
 # Web Lab Provisioning
 
-This document describes the current Orchestryx web-lab lifecycle and the production controls around it.
+This document describes the current Orchestryx lab lifecycle contract. Lab runtime provisioning is disabled in this build while the platform is made reproducible through `infra/platform_cdk/`.
 
 ## Status Model
 
@@ -8,10 +8,10 @@ Lab instances use these statuses:
 
 | Status | Meaning |
 |---|---|
-| `QUEUED` | API accepted the start request, deducted credits, wrote the lab row, and queued Celery work. |
-| `PROVISIONING` | A worker is creating AWS resources and generating access material. |
-| `STARTING` | CloudFormation completed and the EC2 lab host is passing startup/readiness checks. |
-| `READY` | The VPN config is stored and the challenge URL is available over WireGuard. |
+| `QUEUED` | API accepted the start request, deducted credits, wrote the lab row, and queued Celery work. Not used while runtime is disabled. |
+| `PROVISIONING` | A worker is creating runtime resources. Not used while runtime is disabled. |
+| `STARTING` | Runtime resources exist and the lab is becoming reachable. Not used while runtime is disabled. |
+| `READY` | The lab is reachable. Not used while runtime is disabled. |
 | `DESTROYING` | Teardown has been requested or queued. |
 | `STOPPED` | Cloud resources and generated secrets are cleaned up. |
 | `EXPIRED` | TTL elapsed; teardown is queued. |
@@ -19,7 +19,11 @@ Lab instances use these statuses:
 
 Legacy `RUNNING` rows are returned to clients as `READY`; legacy `DESTROYED` rows are returned as `STOPPED`.
 
-## Start Flow
+## Current Start Behavior
+
+`POST /labs/start` returns `501 Not Implemented` while `LAB_RUNTIME_ENABLED=false`. The API checks this before deducting credits, creating a lab row, or dispatching Celery work.
+
+## Future Start Flow
 
 1. Frontend calls `POST /labs/start` with a `template_id`.
 2. API validates the Cognito JWT and loads the database user.
@@ -27,8 +31,8 @@ Legacy `RUNNING` rows are returned to clients as `READY`; legacy `DESTROYED` row
 4. API validates the template, checks credits server-side, deducts credits, and writes a `CreditTransaction`.
 5. API creates a `LabInstance` as `QUEUED` with progress and status text.
 6. API writes a `LabEvent` and dispatches `workers.provision.provision_lab`.
-7. Worker sets `PROVISIONING`, generates WireGuard keys, deploys the CDK stack, then sets `STARTING`.
-8. Worker waits for EC2 instance status checks, stores the VPN config in Secrets Manager, and sets `READY`.
+7. Worker sets `PROVISIONING` and creates runtime resources.
+8. Worker waits for runtime readiness, stores any required access material, and sets `READY`.
 9. UI polls `/labs/{id}/status` and `/labs/{id}/events` to show progress.
 
 ## Stop And Cleanup
@@ -37,16 +41,8 @@ Legacy `RUNNING` rows are returned to clients as `READY`; legacy `DESTROYED` row
 - Queued labs with no stack are cancelled directly and marked `STOPPED`.
 - Started labs are marked `DESTROYING` and passed to `workers.destroy.destroy_lab`.
 - `destroy_expired_labs` queues teardown for `READY` labs past `expires_at`.
-- `fail_stale_provisioning_labs` marks stuck `QUEUED`, `PROVISIONING`, or `STARTING` labs as `FAILED`, refunds credits, and queues cleanup for partial stacks.
+- `fail_stale_provisioning_labs` marks stuck `QUEUED`, `PROVISIONING`, or `STARTING` labs as `FAILED` and refunds credits.
 
-## Speed Notes
+## Runtime Notes
 
-The current MVP still provisions a fresh VPC and EC2 host per lab, then installs Docker, WireGuard, AWS CLI, and pulls the challenge image in user data. That gives strong isolation, but it is the main startup-time cost.
-
-Practical next optimizations:
-
-- Build a golden AMI with Docker, WireGuard, AWS CLI, CloudFormation helper tooling, and common images pre-pulled.
-- Pin lab images by immutable digest instead of `latest` to avoid surprise pulls and cache misses.
-- Keep a small warm pool of stopped/pre-created lab hosts for popular templates.
-- Move single-container web labs to ECS/Fargate plus a shared VPN or per-user gateway once network isolation is designed.
-- Add CloudFormation creation signals from user data so `READY` means app-level readiness, not only EC2 status checks.
+The removed per-lab EC2 CDK app is intentionally not used. The next runtime should be designed against the platform CDK foundation, with explicit choices for networking, image deployment, access controls, and cleanup before any production migration.

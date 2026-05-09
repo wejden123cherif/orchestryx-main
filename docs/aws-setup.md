@@ -130,28 +130,20 @@ aws iam attach-role-policy --role-name orchestryx-api-task-role --policy-arn arn
 | Item | Value |
 |---|---|
 | Role | `orchestryx-worker-task-role` |
-| Purpose | Runtime AWS permissions for SQS consumption, CDK/CloudFormation provisioning, lab network resources, logs, and secrets |
+| Purpose | Runtime AWS permissions for SQS-backed background work. Lab runtime provisioning is disabled. |
 
 Managed policies:
 
 - `arn:aws:iam::aws:policy/AmazonSQSFullAccess`
-- `arn:aws:iam::aws:policy/AWSCloudFormationFullAccess`
-- `arn:aws:iam::aws:policy/AmazonEC2FullAccess`
-- `arn:aws:iam::aws:policy/SecretsManagerReadWrite`
-- `arn:aws:iam::aws:policy/CloudWatchFullAccess`
 
 Already-created commands:
 
 ```bash
 aws iam create-role --role-name orchestryx-worker-task-role ...
 aws iam attach-role-policy --role-name orchestryx-worker-task-role --policy-arn arn:aws:iam::aws:policy/AmazonSQSFullAccess
-aws iam attach-role-policy --role-name orchestryx-worker-task-role --policy-arn arn:aws:iam::aws:policy/AWSCloudFormationFullAccess
-aws iam attach-role-policy --role-name orchestryx-worker-task-role --policy-arn arn:aws:iam::aws:policy/AmazonEC2FullAccess
-aws iam attach-role-policy --role-name orchestryx-worker-task-role --policy-arn arn:aws:iam::aws:policy/SecretsManagerReadWrite
-aws iam attach-role-policy --role-name orchestryx-worker-task-role --policy-arn arn:aws:iam::aws:policy/CloudWatchFullAccess
 ```
 
-Future hardening: replace broad managed policies with least-privilege custom policies once the provisioning stack is stable.
+Future hardening: replace broad managed policies with least-privilege custom policies once ECS migration through platform CDK is stable.
 
 ## Security Groups
 
@@ -214,8 +206,7 @@ The task definitions reference JSON keys inside this secret using ECS secret inj
 - `SQS_PROVISION_URL`
 - `SQS_DESTROY_URL`
 - `CORS_ALLOWED_ORIGINS`
-- `CDK_INFRA_PATH`
-- `WG_DNS`
+- `LAB_RUNTIME_ENABLED`
 
 Already-created command:
 
@@ -284,7 +275,7 @@ These resources were already created before this documentation pass on April 27,
 - ECS task definitions: `orchestryx-api:1`, `orchestryx-worker:1`
 - ECS services: `orchestryx-api-service`, `orchestryx-worker-service`
 
-The exact history is represented by `scripts/linux/setup-aws.sh` and `scripts/windows/setup-aws.ps1`. These scripts are designed to skip resources that already exist.
+The exact history is represented by `scripts/linux/setup-aws.sh` and `scripts/windows/setup-aws.ps1`. These scripts are legacy/manual bootstrap references and are not the recommended path for new infrastructure changes. Use `infra/platform_cdk/` as the active IaC entry point.
 
 ## Operations
 
@@ -299,7 +290,6 @@ make logs-api
 make logs-worker
 make restart-api
 make restart-worker
-make setup-aws
 ```
 
 PowerShell equivalents:
@@ -308,5 +298,6 @@ PowerShell equivalents:
 .\scripts\windows\deploy.ps1
 .\scripts\windows\deploy.ps1 api
 .\scripts\windows\deploy.ps1 worker
-.\scripts\windows\setup-aws.ps1
 ```
+
+The setup scripts may still be read for migration history, but app deploys should consume CDK-generated values from `.env.deploy` or `.env.<env>.generated`.

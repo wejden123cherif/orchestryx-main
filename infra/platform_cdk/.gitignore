@@ -1,0 +1,7 @@
+cdk.out/
+cdk.context.json
+cdk-outputs-*.json
+__pycache__/
+**/__pycache__/
+.venv/
+.cdk.staging/

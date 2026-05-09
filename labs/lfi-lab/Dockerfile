@@ -2,7 +2,7 @@ FROM ubuntu:22.04
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Install Apache + mod_php. This keeps the lab self-contained as a single
-# container that the generic Orchestryx LabStack can run on one EC2 instance.
+# container that a future Orchestryx lab runtime can run.
 RUN apt-get update && apt-get install -y \
     apache2 php8.1 libapache2-mod-php8.1 dos2unix \
     && rm -rf /var/lib/apt/lists/*
@@ -38,6 +38,6 @@ RUN dos2unix /entrypoint.sh && \
 ENV FLAG="Securinets{lf1_d0ubl3_d3c0d3_3nv_forg3_ch4ng3_m3}"
 ENV APP_SECRET="ch4ng3_th1s_k3y_pr0d_2024"
 
-# The generic CDK LabStack maps challenge_port 80 to this container.
+# A future lab runtime should map challenge_port 80 to this container.
 EXPOSE 80
 CMD ["/entrypoint.sh"]

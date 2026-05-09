@@ -13,7 +13,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from apps.api.config import AWS_REGION, LAB_MAX_ACTIVE_PER_USER
+from apps.api.config import AWS_REGION, LAB_MAX_ACTIVE_PER_USER, LAB_RUNTIME_ENABLED
 from apps.api.database import get_db
 from apps.api.middleware.auth import get_current_user
 from apps.api.models.credit_transaction import CreditTransaction
@@ -222,6 +222,15 @@ async def start_lab(
     """
     Start a lab session and return immediately after the provisioning task is queued.
     """
+
+    if not LAB_RUNTIME_ENABLED:
+        raise HTTPException(
+            status_code=501,
+            detail=(
+                "Lab runtime is disabled. Orchestryx platform deployment is active, "
+                "but lab provisioning is not implemented in this build."
+            ),
+        )
 
     cognito_sub = _claims_sub(user)
     try:
@@ -533,7 +542,7 @@ async def stop_lab(
 
         destroy_lab.delay(
             instance_id=instance.id,
-            cfn_stack_name=instance.cfn_stack_name or f"orchestryx-lab-{instance.id}",
+            cfn_stack_name=instance.cfn_stack_name or "",
             secrets_key=instance.secrets_key,
         )
     except Exception:
@@ -560,8 +569,9 @@ async def get_lab_config(
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Download the WireGuard client config for a running lab owned by the user.
-    The config is stored in Secrets Manager by the provisioning worker.
+    Download runtime access config for a running lab owned by the user.
+    Lab runtime is disabled in this build, but older rows may still reference
+    Secrets Manager material.
     """
     db_user = await _get_current_db_user(db, _claims_sub(user))
     instance = await _get_owned_instance(db, instance_id, db_user.id)
@@ -573,7 +583,7 @@ async def get_lab_config(
         )
 
     if instance.secrets_key is None:
-        raise HTTPException(status_code=404, detail="VPN config not found")
+        raise HTTPException(status_code=404, detail="Runtime access config not found")
 
     try:
         secrets = boto3.client("secretsmanager", region_name=AWS_REGION)
@@ -581,16 +591,16 @@ async def get_lab_config(
     except ClientError as exc:
         error_code = exc.response.get("Error", {}).get("Code")
         if error_code == "ResourceNotFoundException":
-            raise HTTPException(status_code=404, detail="VPN config not found")
-        logger.exception("Secrets Manager failed while loading VPN config")
-        raise HTTPException(status_code=502, detail="Could not load VPN config")
+            raise HTTPException(status_code=404, detail="Runtime access config not found")
+        logger.exception("Secrets Manager failed while loading runtime access config")
+        raise HTTPException(status_code=502, detail="Could not load runtime access config")
     except BotoCoreError:
         logger.exception("Could not create Secrets Manager client")
-        raise HTTPException(status_code=502, detail="Could not load VPN config")
+        raise HTTPException(status_code=502, detail="Could not load runtime access config")
 
     config = secret.get("SecretString")
     if config is None:
-        raise HTTPException(status_code=404, detail="VPN config not found")
+        raise HTTPException(status_code=404, detail="Runtime access config not found")
 
     return PlainTextResponse(
         config,

@@ -1,0 +1,47 @@
+aws:
+  account: "${CDK_DEFAULT_ACCOUNT}"
+  region: "${CDK_DEFAULT_REGION}"
+naming:
+  stack_prefix: orchestryx-platform
+  stack_name_prefix: OrchestryxStaging
+  resource_prefix: orchestryx-staging
+network:
+  cidr: 10.90.0.0/16
+  max_azs: 2
+  nat_gateways: 1
+ecr:
+  api_repository_name: orchestryx-staging-api
+  worker_repository_name: orchestryx-staging-worker
+database:
+  enabled: false
+  database_name: orchestryx
+  cluster_identifier: orchestryx-staging-db
+  min_acu: 0.5
+  max_acu: 2
+  backup_retention_days: 7
+queues:
+  provision_queue_name: orchestryx-staging-provision-lab
+  destroy_queue_name: orchestryx-staging-destroy-lab
+auth:
+  user_pool_name: orchestryx-staging-users
+  app_client_name: orchestryx-staging-web
+ecs:
+  cluster_name: orchestryx-staging
+  services_enabled: false
+  api_service_name: orchestryx-staging-api-service
+  worker_service_name: orchestryx-staging-worker-service
+  api_container_port: 8000
+  desired_count: 1
+  cpu: 512
+  memory_mib: 1024
+  runtime_secret_name: orchestryx/api/env
+dns:
+  private_zone_name: orchestryx.internal
+vpn:
+  enabled: false
+  instance_type: t3.micro
+  private_dns_name: vpn.orchestryx.internal
+observability:
+  api_log_group_name: /ecs/orchestryx-staging-api
+  worker_log_group_name: /ecs/orchestryx-staging-worker
+  retention_days: 30

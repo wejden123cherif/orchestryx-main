@@ -382,7 +382,7 @@ async def admin_stop_lab(
 
     destroy_lab.delay(
         instance_id=lab.id,
-        cfn_stack_name=lab.cfn_stack_name or f"orchestryx-lab-{lab.id}",
+        cfn_stack_name=lab.cfn_stack_name or "",
         secrets_key=lab.secrets_key,
     )
     return {"instance_id": lab.id, "status": LAB_STATUS_DESTROYING}

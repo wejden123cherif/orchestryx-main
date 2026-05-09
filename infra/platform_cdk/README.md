@@ -1,0 +1,230 @@
+# Orchestryx Platform CDK
+
+This CDK app defines the long-lived Orchestryx platform foundation: VPC, ECR, queues, Cognito, ECS, database, private DNS, VPN foundation, and CloudWatch log groups.
+
+It is the only active infrastructure-as-code entry point in this repository. The old per-lab EC2 CDK app has been removed, and lab runtime provisioning is currently disabled until a new runtime is implemented deliberately.
+
+## Environments
+
+Environment config lives in:
+
+- `config/dev.yaml`
+- `config/staging.yaml`
+- `config/prod.yaml`
+
+The config files use `${CDK_DEFAULT_ACCOUNT}` and `${CDK_DEFAULT_REGION}` placeholders instead of hardcoded account or region values. Set those through normal CDK credentials/profile selection.
+
+## Synth
+
+From the repo root on Windows:
+
+```powershell
+.venv\Scripts\activate
+cd infra\platform_cdk
+cdk synth -c env=dev
+```
+
+From Linux/macOS/WSL:
+
+```bash
+source .venv/bin/activate
+cd infra/platform_cdk
+cdk synth -c env=dev
+```
+
+Use `-c env=staging` or `-c env=prod` to load the other config files.
+
+## Dev Bring-Up Runbook
+
+`config/dev.yaml` uses `orchestryx-dev-*` resource names and stack IDs prefixed
+with `OrchestryxDev-*`, so dev does not collide with prod/manual names such as
+`orchestryx-api` or `orchestryx-worker`.
+
+The minimum dev stack set for running the platform is:
+
+- `NetworkStack`
+- `EcrStack`
+- `QueuesStack`
+- `AuthStack`
+- `ObservabilityStack`
+- `DatabaseStack`
+- `EcsPlatformStack`
+- `DnsStack`
+
+`VpnStack` remains present as disabled foundation; lab runtime is still disabled.
+
+Dev enables:
+
+- `database.enabled: true`
+- `ecs.services_enabled: true`
+
+For a clean AWS account, use a bootstrap sequence. ECS services reference ECR
+images and the runtime secret, so the repositories and foundation outputs must
+exist before the services can run successfully.
+
+```powershell
+cd infra\platform_cdk
+
+cdk synth -c env=dev
+cdk diff -c env=dev
+
+# Phase 1: create repositories and shared platform dependencies, but not ECS services yet.
+cdk deploy OrchestryxDev-NetworkStack OrchestryxDev-EcrStack OrchestryxDev-QueuesStack OrchestryxDev-AuthStack OrchestryxDev-ObservabilityStack OrchestryxDev-DatabaseStack OrchestryxDev-DnsStack -c env=dev --outputs-file cdk-outputs-dev.json
+python export_env.py --env dev --outputs-file cdk-outputs-dev.json
+
+cd ..\..
+
+# Phase 2: push initial images so ECS can pull :latest during service creation.
+$env:ORCHESTRYX_ENV = "dev"
+.\scripts\windows\deploy.ps1 images
+
+# Phase 3: create/update the runtime secret used by ECS tasks.
+# Build DATABASE_URL from the generated RDS secret and DatabaseEndpoint output.
+# The secret name in dev is orchestryx/dev/api/env.
+
+# Phase 4: create ECS services and remaining enabled stacks.
+cd infra\platform_cdk
+cdk deploy --all -c env=dev --outputs-file cdk-outputs-dev.json
+python export_env.py --env dev --outputs-file cdk-outputs-dev.json
+
+cd ..\..
+
+# Phase 5: run migrations and redeploy application images.
+alembic upgrade head
+.\scripts\windows\deploy.ps1
+```
+
+Linux/macOS/WSL equivalents:
+
+```bash
+cd infra/platform_cdk
+cdk synth -c env=dev
+cdk diff -c env=dev
+cdk deploy OrchestryxDev-NetworkStack OrchestryxDev-EcrStack OrchestryxDev-QueuesStack OrchestryxDev-AuthStack OrchestryxDev-ObservabilityStack OrchestryxDev-DatabaseStack OrchestryxDev-DnsStack -c env=dev --outputs-file cdk-outputs-dev.json
+python export_env.py --env dev --outputs-file cdk-outputs-dev.json
+
+cd ../..
+ORCHESTRYX_ENV=dev ./scripts/linux/deploy.sh images
+
+# Create/update orchestryx/dev/api/env with DATABASE_URL and required app config.
+
+cd infra/platform_cdk
+cdk deploy --all -c env=dev --outputs-file cdk-outputs-dev.json
+python export_env.py --env dev --outputs-file cdk-outputs-dev.json
+
+cd ../..
+alembic upgrade head
+ORCHESTRYX_ENV=dev WAIT_FOR_STABILITY=true ./scripts/linux/deploy.sh
+```
+
+This writes `.env.dev.generated` at the repo root. It is ignored by git.
+
+Verify after deployment:
+
+```bash
+aws ecs describe-services \
+  --cluster "$ORCHESTRYX_ECS_CLUSTER_NAME" \
+  --services "$ORCHESTRYX_API_SERVICE_NAME" "$ORCHESTRYX_WORKER_SERVICE_NAME" \
+  --region "$AWS_REGION"
+
+aws logs tail /ecs/orchestryx-dev-api --since 15m --region "$AWS_REGION"
+aws logs tail /ecs/orchestryx-dev-worker --since 15m --region "$AWS_REGION"
+
+curl http://<dev-api-endpoint>/health
+```
+
+Destroy dev safely when no longer needed:
+
+```bash
+cd infra/platform_cdk
+cdk destroy --all -c env=dev
+```
+
+RDS and ECR resources use retain policies, so review retained dev resources
+manually after destroy if you need a fully clean account.
+
+The generated file includes deployment wiring for the app deploy scripts:
+
+- `AWS_REGION`
+- `AWS_ACCOUNT_ID`
+- `ORCHESTRYX_ECS_CLUSTER_NAME`
+- `ORCHESTRYX_API_SERVICE_NAME`
+- `ORCHESTRYX_WORKER_SERVICE_NAME`
+- `ORCHESTRYX_API_ECR_REPO_URI`
+- `ORCHESTRYX_WORKER_ECR_REPO_URI`
+- `ORCHESTRYX_DATABASE_ENDPOINT`
+- `ORCHESTRYX_DATABASE_SECRET_ARN`
+
+## App Deployment Boundary
+
+`infra/platform_cdk/` owns infrastructure: VPC, ECR, SQS, Cognito, ECS cluster,
+task roles, task definitions, services, database, DNS foundation, and log
+groups.
+
+`scripts/linux/deploy.sh` and `scripts/windows/deploy.ps1` only deploy
+application images to infrastructure that already exists. They build API/worker
+images, tag and push them to ECR, force ECS service redeployments, and can wait
+for service stability. They do not create IAM roles, attach policies, create
+load balancers, create services, or call the legacy setup scripts.
+
+## Deployment Safety
+
+This app is a foundation, not an immediate production migration.
+
+Several resources in `config/prod.yaml` intentionally mirror current manual names such as `orchestryx-api`, `orchestryx-worker`, `orchestryx`, and `orchestryx-db`. If those resources already exist, a direct `cdk deploy` will fail with name conflicts or require an import workflow. Do not deploy over existing production resources without a migration plan.
+
+Safe migration patterns:
+
+1. Use `cdk import` for resources that should keep their current physical names.
+2. Deploy to a new environment name first, validate, then cut traffic over.
+3. Keep `services_enabled: false`, `database.enabled: false`, and `vpn.enabled: false` until imports or replacements are planned.
+4. Compare synthesized templates against `scripts/aws/` manifests before changing live services.
+
+## Stack Map
+
+- `network_stack.py`: creates the VPC, public subnets, private subnets, isolated subnets, and NAT gateways.
+- `ecr_stack.py`: creates API and worker ECR repositories.
+- `queues_stack.py`: creates provision and destroy SQS queues.
+- `auth_stack.py`: creates the Cognito user pool and web app client.
+- `observability_stack.py`: creates ECS CloudWatch log groups.
+- `database_stack.py`: creates the database security group and can create Aurora PostgreSQL when `database.enabled` is true.
+- `ecs_platform_stack.py`: creates the ECS cluster, task roles, execution role, API/worker security groups, and optional API/worker Fargate services when `ecs.services_enabled` is true.
+- `dns_stack.py`: creates the private hosted zone foundation.
+- `vpn_stack.py`: creates the WireGuard gateway security group and role; the instance is created only when `vpn.enabled` is true.
+
+## Manual Resource Replacement Map
+
+The existing `scripts/aws/` folder and `scripts/*/setup-aws.*` scripts remain
+legacy/manual infrastructure references. They are kept for comparison and safe
+migration only; the recommended path is platform CDK first, then app deploy.
+
+- `scripts/aws/ecr/repositories.json` -> `EcrStack`
+- `scripts/aws/ecs/services.json` -> `EcsPlatformStack`
+- `scripts/aws/task-definitions/*.json` -> `EcsPlatformStack` and `constructs/fargate_service.py`
+- `scripts/aws/iam/*.json` -> `EcsPlatformStack`
+- `scripts/aws/security-groups/security-groups.json` -> `DatabaseStack`, `EcsPlatformStack`, and `VpnStack`
+- `scripts/aws/rds/database.json` -> `DatabaseStack`
+- `scripts/aws/logs/log-groups.json` -> `ObservabilityStack`
+- `scripts/aws/secrets/secrets.json` -> imported runtime secret used by `EcsPlatformStack`
+
+## Current Completeness
+
+Complete enough for new non-production synthesis:
+
+- Network/VPC
+- ECR repositories
+- SQS queues
+- Cognito user pool/client
+- CloudWatch log groups
+- Private hosted zone
+- ECS cluster and IAM role foundation
+
+Enabled in dev, opt-in elsewhere:
+
+- Aurora PostgreSQL creation.
+- API and worker Fargate services.
+
+Skeleton or disabled:
+
+- WireGuard EC2 gateway instance is disabled by default.
+- Public API ALB, Route 53 public DNS, and lab-runtime Fargate are intentionally not implemented yet.
