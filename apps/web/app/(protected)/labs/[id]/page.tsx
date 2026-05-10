@@ -144,6 +144,7 @@ export default function LabDetailPage() {
         description: extractApiErrorMessage(error),
         tone: "error",
       });
+      await loadLab();
     } finally {
       setIsWorking(false);
     }
@@ -337,8 +338,8 @@ export default function LabDetailPage() {
             <h2 className="text-xl text-foreground">Lab info</h2>
             <div className="mt-5 grid gap-3 sm:grid-cols-2">
               <div className="rounded-lg border border-border bg-secondary/50 p-3">
-                <p className="text-sm text-muted-foreground">Public IP</p>
-                <p className="mono mt-1 text-sm text-foreground">{lab.ec2_public_ip ?? "Pending"}</p>
+                <p className="text-sm text-muted-foreground">Private IP</p>
+                <p className="mono mt-1 text-sm text-foreground">{lab.ecs_private_ip ?? "Pending"}</p>
               </div>
               <div className="rounded-lg border border-border bg-secondary/50 p-3">
                 <p className="text-sm text-muted-foreground">Challenge URL</p>
@@ -353,7 +354,7 @@ export default function LabDetailPage() {
                     <ExternalLink className="h-3.5 w-3.5 shrink-0" />
                   </a>
                 ) : (
-                  <p className="mt-1 text-sm text-foreground">Connect VPN first</p>
+                  <p className="mt-1 text-sm text-foreground">Available after VPN connection</p>
                 )}
               </div>
               <div className="rounded-lg border border-border bg-secondary/50 p-3">

@@ -49,7 +49,9 @@ class EcsPlatformStack(cdk.Stack):
         database_security_group: ec2.ISecurityGroup,
         api_log_group: logs.ILogGroup,
         worker_log_group: logs.ILogGroup,
+        lab_log_group: logs.ILogGroup,
         database_endpoint: str,
+        vpn_security_group: ec2.ISecurityGroup | None = None,
         **kwargs,
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
@@ -80,6 +82,53 @@ class EcsPlatformStack(cdk.Stack):
             security_group_name=f"{prefix}-worker-sg",
             description="Orchestryx worker ECS tasks",
             allow_all_outbound=True,
+        )
+        self.lab_security_group = ec2.SecurityGroup(
+            self,
+            "LabSecurityGroup",
+            vpc=vpc,
+            security_group_name=f"{prefix}-lab-runtime-sg",
+            description="Orchestryx ephemeral lab ECS tasks",
+            allow_all_outbound=True,
+        )
+        lab_runtime_config = ecs_config.get("lab_runtime", {})
+        if bool(lab_runtime_config.get("public_ingress_enabled", False)):
+            self.lab_security_group.add_ingress_rule(
+                ec2.Peer.ipv4(lab_runtime_config.get("public_ingress_cidr", "0.0.0.0/0")),
+                ec2.Port.tcp_range(
+                    int(lab_runtime_config.get("public_ingress_from_port", 3000)),
+                    int(lab_runtime_config.get("public_ingress_to_port", 3999)),
+                ),
+                "Optional direct web access to lab challenge ports",
+            )
+            # Ensure port 80 and 8080 are included if public access is enabled
+            self.lab_security_group.add_ingress_rule(
+                ec2.Peer.ipv4(lab_runtime_config.get("public_ingress_cidr", "0.0.0.0/0")),
+                ec2.Port.tcp(80),
+                "Allow public HTTP to lab challenge"
+            )
+            self.lab_security_group.add_ingress_rule(
+                ec2.Peer.ipv4(lab_runtime_config.get("public_ingress_cidr", "0.0.0.0/0")),
+                ec2.Port.tcp(8080),
+                "Allow public 8080 to lab challenge"
+            )
+
+        # -------------------------------------------------------------------
+        # VPN Access: Allow internal traffic from WireGuard VPN
+        # -------------------------------------------------------------------
+        # Allow all traffic from the VPN gateway security group (masqueraded traffic)
+        if vpn_security_group:
+            self.lab_security_group.add_ingress_rule(
+                vpn_security_group,
+                ec2.Port.all_traffic(),
+                "Allow all traffic from WireGuard Gateway"
+            )
+
+        # Allow traffic from the VPN client subnet directly (10.8.0.0/16)
+        self.lab_security_group.add_ingress_rule(
+            ec2.Peer.ipv4("10.8.0.0/16"),
+            ec2.Port.all_traffic(),
+            "Allow all traffic from WireGuard VPN client subnet"
         )
         database_security_group.add_ingress_rule(
             self.api_security_group,
@@ -116,6 +165,12 @@ class EcsPlatformStack(cdk.Stack):
             assumed_by=iam.ServicePrincipal("ecs-tasks.amazonaws.com"),
             role_name=f"{prefix}-worker-task-role",
         )
+        lab_task_role = iam.Role(
+            self,
+            "LabTaskRole",
+            assumed_by=iam.ServicePrincipal("ecs-tasks.amazonaws.com"),
+            role_name=f"{prefix}-lab-task-role",
+        )
 
         for queue in (provision_queue, destroy_queue):
             queue.grant_send_messages(api_task_role)
@@ -129,6 +184,30 @@ class EcsPlatformStack(cdk.Stack):
                     "secretsmanager:DescribeSecret",
                 ],
                 resources=["*"],
+            )
+        )
+        worker_task_role.add_to_policy(
+            iam.PolicyStatement(
+                actions=[
+                    "ecs:RegisterTaskDefinition",
+                    "ecs:RunTask",
+                    "ecs:StopTask",
+                    "ecs:DescribeTasks",
+                    "ecs:DescribeTaskDefinition",
+                    "ec2:DescribeNetworkInterfaces",
+                    "logs:CreateLogGroup",
+                    "logs:GetLogEvents",
+                    "logs:DescribeLogStreams",
+                    "ssm:SendCommand",
+                    "ssm:GetCommandInvocation",
+                ],
+                resources=["*"],
+            )
+        )
+        worker_task_role.add_to_policy(
+            iam.PolicyStatement(
+                actions=["iam:PassRole"],
+                resources=[execution_role.role_arn, lab_task_role.role_arn],
             )
         )
 
@@ -153,6 +232,22 @@ class EcsPlatformStack(cdk.Stack):
             "DESTROY_QUEUE": destroy_queue.queue_name,
             "SQS_PROVISION_URL": provision_queue.queue_url,
             "SQS_DESTROY_URL": destroy_queue.queue_url,
+            "LAB_ECS_CLUSTER": self.cluster.cluster_name,
+            "LAB_ECS_SUBNET_IDS": cdk.Fn.join(
+                ",",
+                vpc.select_subnets(subnet_type=ec2.SubnetType.PRIVATE_WITH_EGRESS).subnet_ids,
+            ),
+            "LAB_ECS_SECURITY_GROUP_IDS": self.lab_security_group.security_group_id,
+            "LAB_ECS_TASK_EXECUTION_ROLE_ARN": execution_role.role_arn,
+            "LAB_ECS_TASK_ROLE_ARN": lab_task_role.role_arn,
+            "LAB_ECS_LOG_GROUP": lab_log_group.log_group_name,
+            "LAB_ECS_LOG_STREAM_PREFIX": "lab",
+            "LAB_ECS_ASSIGN_PUBLIC_IP": "false",
+            "LAB_ECS_PUBLIC_ACCESS_ENABLED": "false",
+            "LAB_ECS_CPU": str(int(lab_runtime_config.get("cpu", ecs_config.get("cpu", 512)))),
+            "LAB_ECS_MEMORY_MIB": str(
+                int(lab_runtime_config.get("memory_mib", ecs_config.get("memory_mib", 1024)))
+            ),
         }
 
         self.api_service = OrchestryxFargateService(
@@ -205,8 +300,11 @@ class EcsPlatformStack(cdk.Stack):
                 "worker",
                 "--loglevel=info",
                 "--pool=solo",
+                "-Q",
+                f"{provision_queue.queue_name},{destroy_queue.queue_name}",
                 "-I",
                 "workers.provision,workers.destroy",
+                "--beat",
             ],
             cpu=int(ecs_config.get("cpu", 512)),
             memory_mib=int(ecs_config.get("memory_mib", 1024)),
@@ -233,3 +331,5 @@ class EcsPlatformStack(cdk.Stack):
                 "worker_service_name", f"orchestryx-{env_name}-worker-service"
             ),
         )
+        cdk.CfnOutput(self, "LabSecurityGroupId", value=self.lab_security_group.security_group_id)
+        cdk.CfnOutput(self, "LabTaskRoleArn", value=lab_task_role.role_arn)

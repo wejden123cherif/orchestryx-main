@@ -13,7 +13,14 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from apps.api.config import AWS_REGION, LAB_MAX_ACTIVE_PER_USER, LAB_RUNTIME_ENABLED
+from apps.api.config import (
+    AWS_REGION,
+    LAB_ECS_PUBLIC_ACCESS_ENABLED,
+    LAB_MAX_ACTIVE_PER_USER,
+    LAB_RUNTIME_ENABLED,
+    LAB_VPN_CONFIG_INLINE,
+    LAB_VPN_CONFIG_SECRET_ID,
+)
 from apps.api.database import get_db
 from apps.api.middleware.auth import get_current_user
 from apps.api.models.credit_transaction import CreditTransaction
@@ -32,12 +39,13 @@ from apps.api.services.lab_lifecycle import (
     STOPPABLE_LAB_STATUSES,
     normalize_lab_status,
 )
+from apps.api.services.lab_runtime_ecs import LabRuntimeAwsError, fetch_lab_logs
 
 router = APIRouter(prefix="/labs", tags=["labs"])
 logger = logging.getLogger(__name__)
 
-LEGACY_ACTIVE_LAB_STATUSES = [*ACTIVE_LAB_STATUSES, "RUNNING", "DESTROYING"]
-USER_VISIBLE_LAB_STATUSES = [*LEGACY_ACTIVE_LAB_STATUSES, LAB_STATUS_FAILED, "EXPIRED"]
+LEGACY_ACTIVE_LAB_STATUSES = [*ACTIVE_LAB_STATUSES, "RUNNING"]
+USER_VISIBLE_LAB_STATUSES = [*LEGACY_ACTIVE_LAB_STATUSES, LAB_STATUS_DESTROYING, LAB_STATUS_FAILED, "EXPIRED"]
 
 
 def _normalize_challenge_path(path: str | None) -> str:
@@ -56,6 +64,17 @@ def _build_challenge_url(instance: LabInstance, template: LabTemplate | None) ->
     if normalize_lab_status(instance.status) != LAB_STATUS_READY or template is None:
         return None
 
+    host = (
+        instance.ecs_public_ip
+        if LAB_ECS_PUBLIC_ACCESS_ENABLED and instance.ecs_public_ip
+        else instance.ecs_private_ip
+    )
+    if host:
+        return (
+            f"http://{host}:{template.challenge_port}"
+            f"{_normalize_challenge_path(template.challenge_path)}"
+        )
+
     return (
         f"http://10.8.0.1:{template.challenge_port}"
         f"{_normalize_challenge_path(template.challenge_path)}"
@@ -71,6 +90,44 @@ def _hash_flag(flag: str) -> str:
 def _vpn_config_filename(instance_id: str) -> str:
     short_id = "".join(character for character in instance_id if character.isalnum())[:8]
     return f"ox-{short_id.lower() or 'lab'}.conf"
+
+
+def _render_vpn_config_template(config: str, instance: LabInstance) -> str:
+    rendered = config.replace("{instance_id}", instance.id)
+    if instance.ecs_private_ip:
+        rendered = rendered.replace("{lab_private_ip}", instance.ecs_private_ip)
+    if instance.ecs_public_ip:
+        rendered = rendered.replace("{lab_public_ip}", instance.ecs_public_ip)
+    
+    if instance.secrets_key:
+        try:
+            import json
+            secrets = json.loads(instance.secrets_key)
+            if "private_key" in secrets:
+                rendered = rendered.replace("{client_private_key}", secrets["private_key"])
+            if "client_ip" in secrets:
+                rendered = rendered.replace("{client_ip}", secrets["client_ip"])
+        except Exception:
+            pass
+            
+    return rendered
+
+
+def _load_secret_string(secret_id: str) -> str | None:
+    try:
+        secrets = boto3.client("secretsmanager", region_name=AWS_REGION)
+        secret = secrets.get_secret_value(SecretId=secret_id)
+    except ClientError as exc:
+        error_code = exc.response.get("Error", {}).get("Code")
+        if error_code == "ResourceNotFoundException":
+            return None
+        logger.exception("Secrets Manager failed while loading runtime access config")
+        raise HTTPException(status_code=502, detail="Could not load runtime access config")
+    except BotoCoreError:
+        logger.exception("Could not create Secrets Manager client")
+        raise HTTPException(status_code=502, detail="Could not load runtime access config")
+
+    return secret.get("SecretString")
 
 
 def _is_correct_flag(
@@ -118,6 +175,11 @@ class SubmitFlagRequest(BaseModel):
     flag: Annotated[str, StringConstraints(min_length=1, max_length=256)]
 
 
+class LabLogsResponse(BaseModel):
+    events: list[dict]
+    next_forward_token: str | None = None
+
+
 def _claims_sub(user_claims: dict) -> str:
     cognito_sub = user_claims.get("sub")
     if not cognito_sub:
@@ -162,6 +224,10 @@ def _serialize_instance(
         "status_message": instance.status_message,
         "failure_reason": instance.failure_reason,
         "ec2_public_ip": instance.ec2_public_ip,
+        "ecs_task_arn": instance.ecs_task_arn,
+        "ecs_last_status": instance.ecs_last_status,
+        "ecs_private_ip": instance.ecs_private_ip,
+        "ecs_public_ip": instance.ecs_public_ip,
         "challenge_url": _build_challenge_url(instance, template),
         "expires_at": instance.expires_at,
         "started_at": instance.started_at,
@@ -466,6 +532,32 @@ async def get_lab_events(
     ]
 
 
+@router.get("/{instance_id}/logs", response_model=LabLogsResponse)
+async def get_lab_logs(
+    instance_id: str = Path(..., pattern=INSTANCE_ID_PATTERN),
+    limit: int = 100,
+    next_token: str | None = None,
+    user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    db_user = await _get_current_db_user(db, _claims_sub(user))
+    instance = await _get_owned_instance(db, instance_id, db_user.id)
+
+    if not instance.ecs_log_group or not instance.ecs_log_stream_name:
+        return {"events": [], "next_forward_token": None}
+
+    try:
+        return fetch_lab_logs(
+            log_group=instance.ecs_log_group,
+            log_stream_name=instance.ecs_log_stream_name,
+            limit=limit,
+            next_token=next_token,
+        )
+    except LabRuntimeAwsError:
+        logger.exception("CloudWatch Logs failed while loading lab logs")
+        raise HTTPException(status_code=502, detail="Could not load lab logs")
+
+
 @router.delete("/{instance_id}")
 async def stop_lab(
     instance_id: str = Path(..., pattern=INSTANCE_ID_PATTERN),
@@ -487,7 +579,6 @@ async def stop_lab(
             detail=f"Cannot stop a lab with status {instance.status}",
         )
 
-    previous_status = instance.status
     if current_status == LAB_STATUS_QUEUED and not instance.cfn_stack_name and not instance.secrets_key:
         instance.status = LAB_STATUS_STOPPED
         instance.progress = 100
@@ -537,8 +628,9 @@ async def stop_lab(
 
     try:
         # Dispatch Celery teardown task to SQS. Importing here keeps task
-        # packaging failures recoverable by restoring the previous status.
-        from workers.destroy import destroy_lab
+        # packaging or queue failures recoverable with a direct teardown
+        # fallback so the user is not trapped by the active-lab quota.
+        from workers.destroy import destroy_lab, destroy_lab_now
 
         destroy_lab.delay(
             instance_id=instance.id,
@@ -546,18 +638,41 @@ async def stop_lab(
             secrets_key=instance.secrets_key,
         )
     except Exception:
-        logger.exception("Failed to dispatch teardown task")
+        logger.exception("Failed to dispatch teardown task; attempting direct teardown")
         try:
-            instance.status = previous_status
-            await db.commit()
+            destroy_lab_now(
+                instance_id=instance.id,
+                cfn_stack_name=instance.cfn_stack_name or "",
+                secrets_key=instance.secrets_key,
+            )
+        except Exception:
+            logger.exception("Direct teardown fallback failed")
+            instance.failure_reason = "Could not queue or directly run lab teardown."
+            instance.status_message = "Stop requested, but teardown dispatch failed. Admin cleanup required."
+            db.add(
+                LabEvent(
+                    instance_id=instance.id,
+                    level="error",
+                    phase="destroying",
+                    message="Could not queue or directly run lab teardown; cleanup required.",
+                    progress=instance.progress,
+                )
+            )
+            try:
+                await db.commit()
+            except SQLAlchemyError:
+                await db.rollback()
+                logger.exception("Failed to record teardown dispatch failure")
+            raise HTTPException(status_code=503, detail="Could not queue lab teardown")
+        try:
+            await db.refresh(instance)
         except SQLAlchemyError:
             await db.rollback()
-            logger.exception("Failed to restore lab status after dispatch failure")
-        raise HTTPException(status_code=503, detail="Could not queue lab teardown")
+            logger.exception("Failed to refresh lab after direct teardown fallback")
 
     return {
         "instance_id": instance.id,
-        "status": instance.status,
+        "status": normalize_lab_status(instance.status),
         "message": "Lab is being destroyed.",
     }
 
@@ -582,28 +697,27 @@ async def get_lab_config(
             detail=f"Cannot download config for a lab with status {instance.status}",
         )
 
-    if instance.secrets_key is None:
-        raise HTTPException(status_code=404, detail="Runtime access config not found")
+    config = None
+    if LAB_VPN_CONFIG_INLINE:
+        config = LAB_VPN_CONFIG_INLINE
+    elif LAB_VPN_CONFIG_SECRET_ID:
+        config = _load_secret_string(LAB_VPN_CONFIG_SECRET_ID)
 
-    try:
-        secrets = boto3.client("secretsmanager", region_name=AWS_REGION)
-        secret = secrets.get_secret_value(SecretId=instance.secrets_key)
-    except ClientError as exc:
-        error_code = exc.response.get("Error", {}).get("Code")
-        if error_code == "ResourceNotFoundException":
-            raise HTTPException(status_code=404, detail="Runtime access config not found")
-        logger.exception("Secrets Manager failed while loading runtime access config")
-        raise HTTPException(status_code=502, detail="Could not load runtime access config")
-    except BotoCoreError:
-        logger.exception("Could not create Secrets Manager client")
-        raise HTTPException(status_code=502, detail="Could not load runtime access config")
+    if not config:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "VPN config is not configured for the Fargate lab runtime. "
+                "Set LAB_VPN_CONFIG_SECRET_ID or LAB_VPN_CONFIG_INLINE to a working shared WireGuard client config."
+            ),
+        )
 
-    config = secret.get("SecretString")
-    if config is None:
+    rendered_config = _render_vpn_config_template(config, instance)
+    if not rendered_config.strip():
         raise HTTPException(status_code=404, detail="Runtime access config not found")
 
     return PlainTextResponse(
-        config,
+        rendered_config,
         headers={
             "Content-Disposition": (
                 f"attachment; filename={_vpn_config_filename(instance_id)}"

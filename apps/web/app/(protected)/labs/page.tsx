@@ -115,6 +115,7 @@ export default function LabsPage() {
         description: extractApiErrorMessage(error),
         tone: "error",
       });
+      await loadLabs();
     } finally {
       setActionId(null);
     }

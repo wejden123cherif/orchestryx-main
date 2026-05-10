@@ -10,6 +10,7 @@ os.environ.setdefault("SQS_DESTROY_URL", "https://sqs.eu-central-1.amazonaws.com
 
 from apps.api.services.lab_lifecycle import (  # noqa: E402
     ACTIVE_LAB_STATUSES,
+    LAB_STATUS_DESTROYING,
     LAB_STATUS_PROVISIONING,
     LAB_STATUS_QUEUED,
     LAB_STATUS_READY,
@@ -19,7 +20,7 @@ from apps.api.services.lab_lifecycle import (  # noqa: E402
     normalize_lab_status,
 )
 from fastapi import HTTPException  # noqa: E402
-from apps.api.api.labs import StartLabRequest, start_lab  # noqa: E402
+from apps.api.api.labs import StartLabRequest, LEGACY_ACTIVE_LAB_STATUSES, USER_VISIBLE_LAB_STATUSES, start_lab  # noqa: E402
 
 
 def test_legacy_statuses_are_normalized_for_api_clients():
@@ -36,6 +37,11 @@ def test_startup_statuses_are_active_and_stoppable():
 
     assert LAB_STATUS_QUEUED in STOPPABLE_LAB_STATUSES
     assert LAB_STATUS_STARTING in STOPPABLE_LAB_STATUSES
+
+
+def test_destroying_is_visible_but_not_counted_as_active():
+    assert "DESTROYING" not in LEGACY_ACTIVE_LAB_STATUSES
+    assert LAB_STATUS_DESTROYING in USER_VISIBLE_LAB_STATUSES
 
 
 def test_start_lab_returns_controlled_501_when_runtime_disabled():

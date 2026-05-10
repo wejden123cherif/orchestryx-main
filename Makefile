@@ -2,7 +2,8 @@
         restart-api restart-worker setup-aws aws-status \
         platform-synth-dev platform-diff-dev platform-deploy-dev \
         platform-export-dev platform-destroy-dev \
-        push-sqli-lab push-php-rce-lab push-lfi-lab push-custom-labs \
+        push-sqli-lab push-php-rce-lab push-lfi-lab \
+        push-dfir-lab push-malware-lab push-networking-lab push-custom-labs \
         migrate migrate-docker db-shell test \
         web-install web-dev web-build web-typecheck web-lint
 
@@ -162,5 +163,54 @@ push-lfi-lab:
 	docker push $(ECR_REGISTRY)/orchestryx/lfi-lab:latest
 	@echo "Done! Image: $(ECR_REGISTRY)/orchestryx/lfi-lab:latest"
 
+## Build and publish the MemoryGhost DFIR lab image.
+push-dfir-lab:
+	@echo "Creating ECR repo (if needed)"
+	-aws ecr create-repository --repository-name orchestryx/dfir-lab \
+	  --region $(AWS_REGION) --image-scanning-configuration scanOnPush=true
+	@echo "Logging Docker into ECR"
+	aws ecr get-login-password --region $(AWS_REGION) \
+	  | docker login --username AWS --password-stdin $(ECR_REGISTRY)
+	@echo "Building image"
+	docker build -t orchestryx/dfir-lab:latest labs/dfir/
+	@echo "Tagging for ECR"
+	docker tag orchestryx/dfir-lab:latest $(ECR_REGISTRY)/orchestryx/dfir-lab:latest
+	@echo "Pushing to ECR"
+	docker push $(ECR_REGISTRY)/orchestryx/dfir-lab:latest
+	@echo "Done! Image: $(ECR_REGISTRY)/orchestryx/dfir-lab:latest"
+
+## Build and publish the SandboxEscape Malware lab image.
+push-malware-lab:
+	@echo "Creating ECR repo (if needed)"
+	-aws ecr create-repository --repository-name orchestryx/malware-lab \
+	  --region $(AWS_REGION) --image-scanning-configuration scanOnPush=true
+	@echo "Logging Docker into ECR"
+	aws ecr get-login-password --region $(AWS_REGION) \
+	  | docker login --username AWS --password-stdin $(ECR_REGISTRY)
+	@echo "Building image"
+	docker build -t orchestryx/malware-lab:latest labs/malware/
+	@echo "Tagging for ECR"
+	docker tag orchestryx/malware-lab:latest $(ECR_REGISTRY)/orchestryx/malware-lab:latest
+	@echo "Pushing to ECR"
+	docker push $(ECR_REGISTRY)/orchestryx/malware-lab:latest
+	@echo "Done! Image: $(ECR_REGISTRY)/orchestryx/malware-lab:latest"
+
+## Build and publish the NetworkNinja Networking lab image.
+push-networking-lab:
+	@echo "Creating ECR repo (if needed)"
+	-aws ecr create-repository --repository-name orchestryx/networking-lab \
+	  --region $(AWS_REGION) --image-scanning-configuration scanOnPush=true
+	@echo "Logging Docker into ECR"
+	aws ecr get-login-password --region $(AWS_REGION) \
+	  | docker login --username AWS --password-stdin $(ECR_REGISTRY)
+	@echo "Building image"
+	docker build -t orchestryx/networking-lab:latest labs/networking/
+	@echo "Tagging for ECR"
+	docker tag orchestryx/networking-lab:latest $(ECR_REGISTRY)/orchestryx/networking-lab:latest
+	@echo "Pushing to ECR"
+	docker push $(ECR_REGISTRY)/orchestryx/networking-lab:latest
+	@echo "Done! Image: $(ECR_REGISTRY)/orchestryx/networking-lab:latest"
+
 ## Build and publish every custom ECR-backed lab image.
-push-custom-labs: push-sqli-lab push-php-rce-lab push-lfi-lab
+push-custom-labs: push-sqli-lab push-php-rce-lab push-lfi-lab \
+                  push-dfir-lab push-malware-lab push-networking-lab

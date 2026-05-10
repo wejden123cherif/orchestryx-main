@@ -86,6 +86,8 @@ export interface ActiveLab {
   status_message: string;
   failure_reason: string | null;
   ec2_public_ip: string | null;
+  ecs_private_ip: string | null;
+  ecs_public_ip: string | null;
   challenge_url: string | null;
   expires_at: string;
   started_at: string;

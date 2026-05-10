@@ -103,6 +103,25 @@ database = DatabaseStack(
     env=stack_env,
 )
 
+dns = DnsStack(
+    app,
+    stack_id("dns"),
+    config=config,
+    env_name=env_name,
+    vpc=network.vpc,
+    env=stack_env,
+)
+
+vpn = VpnStack(
+    app,
+    stack_id("vpn"),
+    config=config,
+    env_name=env_name,
+    vpc=network.vpc,
+    private_hosted_zone=dns.private_hosted_zone,
+    env=stack_env,
+)
+
 ecs_platform = EcsPlatformStack(
     app,
     stack_id("ecs"),
@@ -118,26 +137,9 @@ ecs_platform = EcsPlatformStack(
     database_security_group=database.database_security_group,
     api_log_group=observability.api_log_group,
     worker_log_group=observability.worker_log_group,
+    lab_log_group=observability.lab_log_group,
     database_endpoint=database.database_endpoint,
-    env=stack_env,
-)
-
-dns = DnsStack(
-    app,
-    stack_id("dns"),
-    config=config,
-    env_name=env_name,
-    vpc=network.vpc,
-    env=stack_env,
-)
-
-VpnStack(
-    app,
-    stack_id("vpn"),
-    config=config,
-    env_name=env_name,
-    vpc=network.vpc,
-    private_hosted_zone=dns.private_hosted_zone,
+    vpn_security_group=vpn.gateway_security_group,
     env=stack_env,
 )
 

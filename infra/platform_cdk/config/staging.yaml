@@ -35,6 +35,10 @@ ecs:
   cpu: 512
   memory_mib: 1024
   runtime_secret_name: orchestryx/api/env
+  lab_runtime:
+    cpu: 512
+    memory_mib: 1024
+    public_ingress_enabled: false
 dns:
   private_zone_name: orchestryx.internal
 vpn:
@@ -44,4 +48,5 @@ vpn:
 observability:
   api_log_group_name: /ecs/orchestryx-staging-api
   worker_log_group_name: /ecs/orchestryx-staging-worker
+  lab_log_group_name: /ecs/orchestryx-staging-labs
   retention_days: 30

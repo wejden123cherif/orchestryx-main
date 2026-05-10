@@ -45,5 +45,10 @@ celery_app.conf.update(
             "args": (LAB_CLEANUP_STUCK_AFTER_SECONDS,),
             "options": {"queue": DESTROY_QUEUE},
         },
+        "poll-active-lab-tasks-every-minute": {
+            "task": "workers.destroy.poll_active_lab_tasks",
+            "schedule": 60.0,
+            "options": {"queue": DESTROY_QUEUE},
+        },
     },
 )

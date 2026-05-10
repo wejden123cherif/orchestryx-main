@@ -56,9 +56,11 @@ class OrchestryxFargateService(Construct):
 
         secrets = {}
         if runtime_secret is not None:
+            # Only add secrets for keys not already in environment to avoid conflicts
             secrets = {
                 key: ecs.Secret.from_secrets_manager(runtime_secret, key)
                 for key in runtime_secret_keys
+                if key not in environment
             }
 
         container = self.task_definition.add_container(

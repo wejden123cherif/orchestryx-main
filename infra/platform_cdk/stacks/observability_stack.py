@@ -53,6 +53,16 @@ class ObservabilityStack(cdk.Stack):
             retention=retention,
             removal_policy=cdk.RemovalPolicy.RETAIN,
         )
+        self.lab_log_group = logs.LogGroup(
+            self,
+            "LabLogGroup",
+            log_group_name=observability.get(
+                "lab_log_group_name", f"/ecs/orchestryx-{env_name}-labs"
+            ),
+            retention=retention,
+            removal_policy=cdk.RemovalPolicy.RETAIN,
+        )
 
         cdk.CfnOutput(self, "ApiLogGroupName", value=self.api_log_group.log_group_name)
         cdk.CfnOutput(self, "WorkerLogGroupName", value=self.worker_log_group.log_group_name)
+        cdk.CfnOutput(self, "LabLogGroupName", value=self.lab_log_group.log_group_name)

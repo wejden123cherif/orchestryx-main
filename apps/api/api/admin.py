@@ -378,13 +378,41 @@ async def admin_stop_lab(
         logger.exception("Database write failed while marking lab for admin teardown")
         raise HTTPException(status_code=500, detail="Database write failed")
 
-    from workers.destroy import destroy_lab
+    try:
+        from workers.destroy import destroy_lab, destroy_lab_now
 
-    destroy_lab.delay(
-        instance_id=lab.id,
-        cfn_stack_name=lab.cfn_stack_name or "",
-        secrets_key=lab.secrets_key,
-    )
+        destroy_lab.delay(
+            instance_id=lab.id,
+            cfn_stack_name=lab.cfn_stack_name or "",
+            secrets_key=lab.secrets_key,
+        )
+    except Exception:
+        logger.exception("Failed to dispatch admin teardown task; attempting direct teardown")
+        try:
+            destroy_lab_now(
+                instance_id=lab.id,
+                cfn_stack_name=lab.cfn_stack_name or "",
+                secrets_key=lab.secrets_key,
+            )
+        except Exception:
+            logger.exception("Direct admin teardown fallback failed")
+            lab.failure_reason = "Could not queue or directly run lab teardown."
+            lab.status_message = "Admin stop requested, but teardown dispatch failed. Cleanup required."
+            db.add(
+                LabEvent(
+                    instance_id=lab.id,
+                    level="error",
+                    phase="destroying",
+                    message="Could not queue or directly run lab teardown; cleanup required.",
+                    progress=lab.progress,
+                )
+            )
+            try:
+                await db.commit()
+            except SQLAlchemyError:
+                await db.rollback()
+                logger.exception("Failed to record admin teardown dispatch failure")
+            raise HTTPException(status_code=503, detail="Could not queue lab teardown")
     return {"instance_id": lab.id, "status": LAB_STATUS_DESTROYING}
 
 

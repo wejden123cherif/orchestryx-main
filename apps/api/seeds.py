@@ -65,7 +65,7 @@ LAB_TEMPLATES = [
     LabTemplate(
         id="web-sqli-01",
         title="SQL Injection - Login Bypass",
-        category="Web",
+        category="Web App",
         difficulty="Beginner",
         description=(
             "Exploit a classic SQL injection vulnerability in the OWASP Juice Shop "
@@ -87,7 +87,7 @@ LAB_TEMPLATES = [
     LabTemplate(
         id="web-dvwa-01",
         title="DVWA - Vulnerable Web Application",
-        category="Web",
+        category="Web App",
         difficulty="Beginner",
         description=(
             "Practice common web exploitation techniques against a vulnerable web app "
@@ -109,7 +109,7 @@ LAB_TEMPLATES = [
     LabTemplate(
         id="web-nexbank-01",
         title="NexBank - Corporate Portal SQLi",
-        category="Web",
+        category="Web App",
         difficulty="Intermediate",
         description=(
             "Exploit SQL injection vulnerabilities in NexBank, a corporate banking portal. "
@@ -131,7 +131,7 @@ LAB_TEMPLATES = [
     LabTemplate(
         id="web-php-rce-01",
         title="PHP Remote Code Execution",
-        category="Web",
+        category="Web App",
         difficulty="Intermediate",
         description=(
             "Exploit a vulnerable PHP application that allows remote code execution. "
@@ -152,7 +152,7 @@ LAB_TEMPLATES = [
     LabTemplate(
         id="web-lfi-01",
         title="The Herald - Local File Inclusion",
-        category="Web",
+        category="Web App",
         difficulty="Intermediate",
         description=(
             "Exploit a double URL-decoding local file inclusion bug in a news portal. "
@@ -165,6 +165,69 @@ LAB_TEMPLATES = [
         instance_type="t3.small",
         challenge_port=80,
         challenge_path="/",
+        is_active=True,
+    ),
+
+    # 6. MemoryGhost — Windows Memory Forensics
+    LabTemplate(
+        id="web-dfir-01",
+        title="MemoryGhost - Windows Memory Forensics",
+        category="DFIR",
+        difficulty="Intermediate",
+        description=(
+            "Analyze pre-captured memory dumps from compromised Windows systems using Volatility 3. "
+            "Identify malicious processes, extract command-line arguments, and retrieve the hidden flag. "
+            "Connect via SSH to start your analysis."
+        ),
+        credits_cost=2,
+        ttl_hours=2,
+        docker_image_uri=f"{_ECR_BASE}/orchestryx/dfir-lab:latest",
+        cdk_stack_class="runtime-disabled",
+        instance_type="t3.small",
+        challenge_port=3000,
+        challenge_path="/",
+        is_active=True,
+    ),
+
+    # 7. SandboxEscape — Malware Behavioral Analysis
+    LabTemplate(
+        id="web-malware-01",
+        title="SandboxEscape - Malware Behavioral Analysis",
+        category="Malware",
+        difficulty="Intermediate",
+        description=(
+            "Analyze the behavior of a suspicious Python script in an automated sandbox environment. "
+            "Observe process execution, network beacons, and exfiltration attempts to reconstruct the "
+            "attack and retrieve the flag."
+        ),
+        credits_cost=2,
+        ttl_hours=2,
+        docker_image_uri=f"{_ECR_BASE}/orchestryx/malware-lab:latest",
+        cdk_stack_class="runtime-disabled",
+        instance_type="t3.medium",
+        challenge_port=8080,
+        challenge_path="/",
+        is_active=True,
+    ),
+
+    # 8. NetworkNinja — Command Injection
+    LabTemplate(
+        id="web-networking-01",
+        title="NetworkNinja - Command Injection",
+        category="Network",
+        difficulty="Beginner",
+        description=(
+            "Exploit a command injection vulnerability in a poorly configured internal network utility. "
+            "Escape the application's intended logic to execute arbitrary shell commands and read "
+            "sensitive data from the server."
+        ),
+        credits_cost=1,
+        ttl_hours=2,
+        docker_image_uri=f"{_ECR_BASE}/orchestryx/networking-lab:latest",
+        cdk_stack_class="runtime-disabled",
+        instance_type="t3.small",
+        challenge_port=80,
+        challenge_path="/login.php",
         is_active=True,
     ),
 ]
@@ -205,5 +268,17 @@ LAB_FLAGS = [
         template_id="web-lfi-01",
         # Future runtime may inject ORCHESTRYX{<instance-id>} as FLAG.
         flag_hash=_flag_hash("ORCHESTRYX{lfi_pwned}"),
+    ),
+    LabFlag(
+        template_id="web-dfir-01",
+        flag_hash=_flag_hash("ORCHESTRYX{dfir_memory_ghost}"),
+    ),
+    LabFlag(
+        template_id="web-malware-01",
+        flag_hash=_flag_hash("ORCHESTRYX{malware_sandbox_escape}"),
+    ),
+    LabFlag(
+        template_id="web-networking-01",
+        flag_hash=_flag_hash("ORCHESTRYX{network_command_injection}"),
     ),
 ]

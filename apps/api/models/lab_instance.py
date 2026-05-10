@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, DateTime, ForeignKey, Boolean, Integer, Text
+from sqlalchemy import Column, String, DateTime, ForeignKey, Boolean, Integer, Text, JSON
 from sqlalchemy.sql import func
 from apps.api.database import Base
 import uuid
@@ -44,6 +44,21 @@ class LabInstance(Base):
     # Runtime access secret key. Retained for future runtime use and older rows.
     secrets_key = Column(String, nullable=True)
 
+    # ECS Fargate runtime metadata for the current lab deployment path.
+    ecs_cluster_name = Column(String, nullable=True)
+    ecs_task_arn = Column(String, nullable=True)
+    ecs_task_definition_arn = Column(String, nullable=True)
+    ecs_last_status = Column(String, nullable=True)
+    ecs_desired_status = Column(String, nullable=True)
+    ecs_container_name = Column(String, nullable=True)
+    ecs_log_group = Column(String, nullable=True)
+    ecs_log_stream_name = Column(String, nullable=True)
+    ecs_network_interface_id = Column(String, nullable=True)
+    ecs_private_ip = Column(String, nullable=True)
+    ecs_public_ip = Column(String, nullable=True)
+    ecs_stop_reason = Column(Text, nullable=True)
+    runtime_metadata = Column(JSON, nullable=True)
+
     # Whether the user has submitted the correct flag
     flag_submitted = Column(Boolean, default=False, nullable=False)
 
@@ -55,6 +70,9 @@ class LabInstance(Base):
 
     # Set when lab is fully destroyed
     destroyed_at = Column(DateTime(timezone=True), nullable=True)
+
+    ecs_started_at = Column(DateTime(timezone=True), nullable=True)
+    ecs_stopped_at = Column(DateTime(timezone=True), nullable=True)
 
     # Lifecycle timing used for troubleshooting slow starts and cleanup jobs.
     provisioning_started_at = Column(DateTime(timezone=True), nullable=True)

@@ -22,6 +22,8 @@
         "worker",
         "--loglevel=info",
         "--pool=solo",
+        "-Q",
+        "orchestryx-provision-lab,orchestryx-destroy-lab",
         "-I",
         "workers.provision,workers.destroy"
       ],
@@ -32,7 +34,7 @@
         },
         {
           "name": "LAB_RUNTIME_ENABLED",
-          "value": "false"
+          "value": "true"
         }
       ],
       "secrets": [

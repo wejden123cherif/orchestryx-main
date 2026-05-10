@@ -39,6 +39,7 @@ class VpnStack(cdk.Stack):
             instance_type=vpn.get("instance_type", "t3.micro"),
             enabled=bool(vpn.get("enabled", False)),
         )
+        self.gateway_security_group = gateway.security_group
 
         if gateway.instance is not None:
             route53.ARecord(

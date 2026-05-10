@@ -602,7 +602,7 @@ def print_billing() -> None:
         for day in d["daily"]:
             bar_len = int(day["amount"] * 10)
             bar = "█" * min(bar_len, 30)
-            print(f"  {c(day['date'], DIM)}  {c(f'${day[\"amount\"]:7.4f}', WHITE)}  {c(bar, BLUE)}")
+            print(f"  {c(day['date'], DIM)}  {c(f'${day['amount']:7.4f}', WHITE)}  {c(bar, BLUE)}")
 
 
 def print_alarms() -> None:

@@ -15,7 +15,7 @@ COPY evidence/MemoryDump_Lab1.raw /home/analyst/evidence/memory.vmem
 RUN chown -R analyst:analyst /home/analyst/evidence/
 
 COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+RUN sed -i 's/\r$//' /entrypoint.sh && chmod +x /entrypoint.sh
 
 EXPOSE 22 3000
 ENTRYPOINT ["/entrypoint.sh"]

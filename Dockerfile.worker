@@ -18,4 +18,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY apps ./apps
 COPY workers ./workers
 
-CMD ["celery", "-A", "workers.celery_app", "worker", "--loglevel=info", "--pool=solo", "--beat", "-I", "workers.provision,workers.destroy"]
+CMD ["celery", "-A", "workers.celery_app", "worker", "--loglevel=info", "--pool=solo", "--beat", "-Q", "orchestryx-provision-lab,orchestryx-destroy-lab", "-I", "workers.provision,workers.destroy"]
