@@ -2,6 +2,7 @@
         restart-api restart-worker setup-aws aws-status \
         platform-synth-dev platform-diff-dev platform-deploy-dev \
         platform-export-dev platform-destroy-dev \
+        run-migrations-dev \
         push-sqli-lab push-php-rce-lab push-lfi-lab \
         push-dfir-lab push-malware-lab push-networking-lab push-custom-labs \
         migrate migrate-docker db-shell test \
@@ -95,6 +96,12 @@ platform-export-dev:
 
 platform-destroy-dev:
 	cd infra/platform_cdk && cdk destroy --all -c env=dev
+
+## Run the one-off Alembic migration task inside ECS Fargate (Linux/macOS/WSL).
+## On Windows use: .\scripts\windows\run-migrations.ps1
+## Requires .env.dev.generated (run make platform-export-dev first).
+run-migrations-dev:
+	./scripts/linux/run-migrations.sh
 
 logs-api:
 	aws logs tail $(API_LOG_GROUP) --follow --region $(AWS_REGION)

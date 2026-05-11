@@ -48,10 +48,17 @@ The minimum dev stack set for running the platform is:
 - `AuthStack`
 - `ObservabilityStack`
 - `DatabaseStack`
-- `EcsPlatformStack`
+- `EcsPlatformStack` (includes ALB, API/worker services, one-off migration task definition)
 - `DnsStack`
+- `VpnStack`
 
-`VpnStack` remains present as disabled foundation; lab runtime is still disabled.
+`EcsPlatformStack` now provisions:
+- An internet-facing Application Load Balancer (`alb.enabled: true` in dev.yaml)
+- A one-off Alembic migration task definition (same image/role as API, invoked explicitly)
+
+The API starts in degraded mode if migrations have not run (`/health` returns 200,
+`/ready` returns 503).  Run the migration task before expecting `GET /catalog` or
+any DB-backed route to work.
 
 Dev enables:
 
@@ -100,21 +107,32 @@ $env:ORCHESTRYX_ENV = "dev"
 #     --secret-string '{"DATABASE_URL":"postgresql+asyncpg://...",...}'
 
 # Phase 4: deploy EcsPlatformStack (safe now that images exist).
+# This creates the ALB, API/worker services, and migration task definition.
+# API will start in degraded mode (/ready → 503) until migrations run.
 cd infra\platform_cdk
 cdk deploy OrchestryxDev-EcsPlatformStack -c env=dev --outputs-file cdk-outputs-dev.json
 python export_env.py --env dev --outputs-file cdk-outputs-dev.json
 
 cd ..\..
 
-# Phase 5: run database migrations.
-# Requires DATABASE_URL to be set in your local environment pointing at Aurora.
-# Aurora is in an isolated private subnet — run from within the VPC or through
-# a bastion/VPN, not directly from a developer workstation.
-alembic upgrade head
+# Phase 5: run Alembic migrations inside ECS Fargate.
+# Aurora is in a private isolated subnet — never run alembic from a laptop.
+# The migration task uses the same image, security group, and secret as the API.
+.\scripts\windows\run-migrations.ps1
+# On Linux/macOS/WSL: ./scripts/linux/run-migrations.sh
 
-# Phase 6: force a clean ECS redeployment now that migrations are applied.
-# Only run this after EcsPlatformStack is deployed and services exist.
-.\scripts\windows\deploy.ps1 all
+# Phase 6: restart the API service so it picks up the migrated schema.
+# The script prints the exact restart command; or run it manually:
+#   aws ecs update-service --cluster orchestryx-dev --service orchestryx-dev-api-service --force-new-deployment --region eu-central-1
+.\scripts\windows\deploy.ps1 api
+
+# Phase 7: verify the API is healthy.
+# Check ALB target group health:
+#   aws elbv2 describe-target-health --target-group-arn <TargetGroupArn> --region eu-central-1
+# Check /health (always 200) and /ready (200 only after migrations):
+#   curl http://<ApiLoadBalancerDnsName>/health
+#   curl http://<ApiLoadBalancerDnsName>/ready
+# ApiLoadBalancerDnsName is in cdk-outputs-dev.json and .env.dev.generated (ORCHESTRYX_API_ALB_DNS)
 ```
 
 Linux/macOS/WSL equivalents:
@@ -143,11 +161,15 @@ python export_env.py --env dev --outputs-file cdk-outputs-dev.json
 
 cd ../..
 
-# Phase 5: migrations (requires VPC access or bastion)
-alembic upgrade head
+# Phase 5: run migrations via ECS Fargate (never from laptop — Aurora is private)
+./scripts/linux/run-migrations.sh
 
-# Phase 6
-ORCHESTRYX_ENV=dev WAIT_FOR_STABILITY=true ./scripts/linux/deploy.sh all
+# Phase 6: restart API so it picks up the migrated schema
+ORCHESTRYX_ENV=dev ./scripts/linux/deploy.sh api
+
+# Phase 7: verify
+# curl http://$ORCHESTRYX_API_ALB_DNS/health
+# curl http://$ORCHESTRYX_API_ALB_DNS/ready
 ```
 
 This writes `.env.dev.generated` at the repo root. It is ignored by git.

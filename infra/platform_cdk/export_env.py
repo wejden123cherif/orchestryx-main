@@ -23,6 +23,10 @@ OUTPUT_MAP = {
         "EcsClusterName": "ORCHESTRYX_ECS_CLUSTER_NAME",
         "ApiServiceName": "ORCHESTRYX_API_SERVICE_NAME",
         "WorkerServiceName": "ORCHESTRYX_WORKER_SERVICE_NAME",
+        "ApiSecurityGroupId": "ORCHESTRYX_API_SG_ID",
+        "MigrationTaskDefinitionArn": "ORCHESTRYX_MIGRATION_TASK_ARN",
+        "ApiLoadBalancerDnsName": "ORCHESTRYX_API_ALB_DNS",
+        "ApiBaseUrl": "ORCHESTRYX_API_BASE_URL",
     },
     "DatabaseStack": {
         "DatabaseEndpoint": "ORCHESTRYX_DATABASE_ENDPOINT",

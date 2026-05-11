@@ -50,6 +50,10 @@ vpn:
   enabled: true
   instance_type: t3.micro
   private_dns_name: vpn.orchestryx.internal
+alb:
+  # Internet-facing Application Load Balancer for the API service.
+  # HTTP only for dev. Add ACM cert + HTTPS listener when api.orchestryx.cloud is ready.
+  enabled: true
 observability:
   api_log_group_name: /ecs/orchestryx-dev-api
   worker_log_group_name: /ecs/orchestryx-dev-worker

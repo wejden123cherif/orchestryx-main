@@ -4,6 +4,7 @@ import aws_cdk as cdk
 from aws_cdk import aws_ec2 as ec2
 from aws_cdk import aws_ecr as ecr
 from aws_cdk import aws_ecs as ecs
+from aws_cdk import aws_elasticloadbalancingv2 as elbv2
 from aws_cdk import aws_iam as iam
 from aws_cdk import aws_logs as logs
 from aws_cdk import aws_secretsmanager as secretsmanager
@@ -341,6 +342,97 @@ class EcsPlatformStack(cdk.Stack):
             enabled=services_enabled,
         )
 
+        # ── One-off Alembic migration task ────────────────────────────────
+        # Invoked via scripts/windows/run-migrations.ps1 or
+        # scripts/linux/run-migrations.sh before the first API startup and
+        # whenever schema migrations are added.  Uses the API image and task
+        # role so it has identical DB/secret access to the API service.
+        if runtime_secret is not None:
+            _migration_secrets = {
+                key: ecs.Secret.from_secrets_manager(runtime_secret, key)
+                for key in self.SECRET_KEYS
+                if key not in shared_environment
+            }
+            migration_task_definition = ecs.FargateTaskDefinition(
+                self,
+                "MigrationTaskDefinition",
+                cpu=int(ecs_config.get("cpu", 512)),
+                memory_limit_mib=int(ecs_config.get("memory_mib", 1024)),
+                execution_role=execution_role,
+                task_role=api_task_role,
+                family=f"{prefix}-migrate",
+            )
+            migration_task_definition.add_container(
+                "Container",
+                container_name="migrate",
+                image=ecs.ContainerImage.from_ecr_repository(api_repository, "latest"),
+                command=["alembic", "upgrade", "head"],
+                environment=shared_environment,
+                secrets=_migration_secrets,
+                logging=ecs.AwsLogDriver(
+                    log_group=api_log_group,
+                    stream_prefix="migration",
+                ),
+            )
+
+        # ── Internet-facing Application Load Balancer ──────────────────────
+        # Routes public HTTP traffic to the API service in private subnets.
+        # Worker, lab, and VPN resources are never attached to this ALB.
+        alb_config = config.get("alb", {})
+        alb_enabled = bool(alb_config.get("enabled", False)) and services_enabled
+
+        self.alb: elbv2.ApplicationLoadBalancer | None = None
+
+        if alb_enabled and self.api_service.service is not None:
+            alb_security_group = ec2.SecurityGroup(
+                self,
+                "AlbSecurityGroup",
+                vpc=vpc,
+                security_group_name=f"{prefix}-alb-sg",
+                description="Internet-facing ALB for Orchestryx API",
+                allow_all_outbound=True,
+            )
+            alb_security_group.add_ingress_rule(
+                ec2.Peer.any_ipv4(),
+                ec2.Port.tcp(80),
+                "Allow HTTP from internet",
+            )
+            # Allow the ALB to forward requests into the API container port.
+            # open=False on add_listener prevents CDK from adding a duplicate rule.
+            self.api_security_group.add_ingress_rule(
+                alb_security_group,
+                ec2.Port.tcp(int(ecs_config.get("api_container_port", 8000))),
+                "Allow ALB to reach API container",
+            )
+
+            self.alb = elbv2.ApplicationLoadBalancer(
+                self,
+                "ApiAlb",
+                vpc=vpc,
+                internet_facing=True,
+                security_group=alb_security_group,
+                vpc_subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PUBLIC),
+                load_balancer_name=f"{prefix}-api-alb",
+            )
+
+            http_listener = self.alb.add_listener("HttpListener", port=80, open=False)
+            http_listener.add_targets(
+                "ApiTargets",
+                port=int(ecs_config.get("api_container_port", 8000)),
+                protocol=elbv2.ApplicationProtocol.HTTP,
+                targets=[self.api_service.service],
+                deregistration_delay=cdk.Duration.seconds(30),
+                health_check=elbv2.HealthCheck(
+                    path="/health",
+                    healthy_http_codes="200",
+                    interval=cdk.Duration.seconds(30),
+                    timeout=cdk.Duration.seconds(5),
+                    healthy_threshold_count=2,
+                    unhealthy_threshold_count=3,
+                ),
+            )
+
+        # ── Outputs ────────────────────────────────────────────────────────
         cdk.CfnOutput(self, "EcsClusterName", value=self.cluster.cluster_name)
         cdk.CfnOutput(
             self,
@@ -356,3 +448,21 @@ class EcsPlatformStack(cdk.Stack):
         )
         cdk.CfnOutput(self, "LabSecurityGroupId", value=self.lab_security_group.security_group_id)
         cdk.CfnOutput(self, "LabTaskRoleArn", value=lab_task_role.role_arn)
+        cdk.CfnOutput(self, "ApiSecurityGroupId", value=self.api_security_group.security_group_id)
+        if runtime_secret is not None:
+            cdk.CfnOutput(
+                self,
+                "MigrationTaskDefinitionArn",
+                value=migration_task_definition.task_definition_arn,
+            )
+        if self.alb is not None:
+            cdk.CfnOutput(
+                self,
+                "ApiLoadBalancerDnsName",
+                value=self.alb.load_balancer_dns_name,
+            )
+            cdk.CfnOutput(
+                self,
+                "ApiBaseUrl",
+                value=cdk.Fn.join("", ["http://", self.alb.load_balancer_dns_name]),
+            )

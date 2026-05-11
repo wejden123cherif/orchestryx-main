@@ -22,6 +22,7 @@ import logging
 
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -45,6 +46,10 @@ from apps.api.models.user import User
 from apps.api.seeds import LAB_FLAGS, LAB_TEMPLATES
 
 logger = logging.getLogger(__name__)
+
+# True only after seed data sync completes without error on startup.
+# Checked by /ready; /health is always 200 regardless of this flag.
+_startup_ok: bool = False
 
 app = FastAPI(title="Orchestryx API")
 
@@ -75,7 +80,12 @@ async def startup() -> None:
     Schema migrations are handled by Alembic and must be run before the API
     starts (see docker-compose.yml 'migrate' service or the README).  This
     handler only manages seed *data* — it never touches the schema.
+
+    If the seed sync fails (e.g. tables do not exist yet), the API starts in
+    degraded mode rather than crashing.  /health returns 200; /ready returns
+    503 until the issue is resolved and the service is restarted.
     """
+    global _startup_ok
     from sqlalchemy.ext.asyncio import AsyncSession as _AsyncSession
 
     from apps.api.database import engine as _engine
@@ -147,12 +157,15 @@ async def startup() -> None:
                     updated_flags,
                 )
 
+        _startup_ok = True
+
     except SQLAlchemyError:
         logger.exception(
-            "Seed data synchronization failed on startup. "
-            "Ensure 'alembic upgrade head' has been run before starting the API."
+            "Seed data sync failed — migrations have not been applied yet. "
+            "API is starting in degraded mode. "
+            "Run the ECS migration task (scripts/windows/run-migrations.ps1) then "
+            "restart this service. /health returns 200; /ready returns 503."
         )
-        raise
 
 
 # ── Routers ───────────────────────────────────────────────────────────────────
@@ -167,7 +180,27 @@ app.include_router(admin.router)
 
 @app.get("/health")
 async def health() -> dict:
+    """Always returns 200. Used as the ALB target-group health check."""
     return {"status": "ok"}
+
+
+@app.get("/ready")
+async def ready() -> JSONResponse:
+    """Returns 200 when seed data was applied successfully on startup, 503 otherwise.
+
+    Use this to confirm that Alembic migrations have run and the API is fully
+    operational.  The ALB health check uses /health (not /ready) so that the
+    service stays in-rotation even when /ready is degraded.
+    """
+    if not _startup_ok:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "degraded",
+                "detail": "seed data not applied; run alembic upgrade head then restart the service",
+            },
+        )
+    return JSONResponse(content={"status": "ready"})
 
 
 @app.get("/me")
