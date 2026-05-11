@@ -83,53 +83,21 @@ class EcsPlatformStack(cdk.Stack):
             description="Orchestryx worker ECS tasks",
             allow_all_outbound=True,
         )
+        # Shared lab SG: egress-only baseline.
+        # Per-lab security groups (created by the worker at RunTask time) carry
+        # all inbound rules: tcp/{challenge_port} from {user_vpn_ip}/32 only.
+        # No inbound rules are added here — deny-by-default for all lab tasks.
         self.lab_security_group = ec2.SecurityGroup(
             self,
             "LabSecurityGroup",
             vpc=vpc,
             security_group_name=f"{prefix}-lab-runtime-sg",
-            description="Orchestryx ephemeral lab ECS tasks",
+            description="Orchestryx ephemeral lab ECS tasks — egress baseline, no ingress",
             allow_all_outbound=True,
         )
+        # public_ingress_enabled is intentionally not supported in the Phase 1
+        # model. Lab access is VPN-only. Remove or ignore any old config key.
         lab_runtime_config = ecs_config.get("lab_runtime", {})
-        if bool(lab_runtime_config.get("public_ingress_enabled", False)):
-            self.lab_security_group.add_ingress_rule(
-                ec2.Peer.ipv4(lab_runtime_config.get("public_ingress_cidr", "0.0.0.0/0")),
-                ec2.Port.tcp_range(
-                    int(lab_runtime_config.get("public_ingress_from_port", 3000)),
-                    int(lab_runtime_config.get("public_ingress_to_port", 3999)),
-                ),
-                "Optional direct web access to lab challenge ports",
-            )
-            # Ensure port 80 and 8080 are included if public access is enabled
-            self.lab_security_group.add_ingress_rule(
-                ec2.Peer.ipv4(lab_runtime_config.get("public_ingress_cidr", "0.0.0.0/0")),
-                ec2.Port.tcp(80),
-                "Allow public HTTP to lab challenge"
-            )
-            self.lab_security_group.add_ingress_rule(
-                ec2.Peer.ipv4(lab_runtime_config.get("public_ingress_cidr", "0.0.0.0/0")),
-                ec2.Port.tcp(8080),
-                "Allow public 8080 to lab challenge"
-            )
-
-        # -------------------------------------------------------------------
-        # VPN Access: Allow internal traffic from WireGuard VPN
-        # -------------------------------------------------------------------
-        # Allow all traffic from the VPN gateway security group (masqueraded traffic)
-        if vpn_security_group:
-            self.lab_security_group.add_ingress_rule(
-                vpn_security_group,
-                ec2.Port.all_traffic(),
-                "Allow all traffic from WireGuard Gateway"
-            )
-
-        # Allow traffic from the VPN client subnet directly (10.8.0.0/16)
-        self.lab_security_group.add_ingress_rule(
-            ec2.Peer.ipv4("10.8.0.0/16"),
-            ec2.Port.all_traffic(),
-            "Allow all traffic from WireGuard VPN client subnet"
-        )
         database_security_group.add_ingress_rule(
             self.api_security_group,
             ec2.Port.tcp(5432),
@@ -179,7 +147,23 @@ class EcsPlatformStack(cdk.Stack):
         api_task_role.add_to_policy(
             iam.PolicyStatement(
                 actions=[
-                    "cognito-idp:*",
+                    # Cognito: only the actions the API actually invokes.
+                    # AdminGetUser is used to validate tokens; the user-facing
+                    # auth endpoints (register, login, confirm, password reset)
+                    # use the public Cognito hosted UI or InitiateAuth flows.
+                    "cognito-idp:AdminGetUser",
+                    "cognito-idp:AdminUpdateUserAttributes",
+                    "cognito-idp:AdminDisableUser",
+                    "cognito-idp:AdminEnableUser",
+                    "cognito-idp:ListUsers",
+                    "cognito-idp:InitiateAuth",
+                    "cognito-idp:RespondToAuthChallenge",
+                    "cognito-idp:SignUp",
+                    "cognito-idp:ConfirmSignUp",
+                    "cognito-idp:ResendConfirmationCode",
+                    "cognito-idp:ForgotPassword",
+                    "cognito-idp:ConfirmForgotPassword",
+                    "cognito-idp:ChangePassword",
                     "secretsmanager:GetSecretValue",
                     "secretsmanager:DescribeSecret",
                 ],
@@ -195,12 +179,41 @@ class EcsPlatformStack(cdk.Stack):
                     "ecs:DescribeTasks",
                     "ecs:DescribeTaskDefinition",
                     "ec2:DescribeNetworkInterfaces",
+                    "ec2:DescribeInstances",
+                    "ec2:CreateSecurityGroup",
+                    "ec2:AuthorizeSecurityGroupIngress",
+                    "ec2:DeleteSecurityGroup",
+                    "ec2:CreateTags",
                     "logs:CreateLogGroup",
                     "logs:GetLogEvents",
                     "logs:DescribeLogStreams",
-                    "ssm:SendCommand",
-                    "ssm:GetCommandInvocation",
                 ],
+                resources=["*"],
+            )
+        )
+        # SSM permissions scoped to the WireGuard gateway tag to prevent the
+        # worker from sending arbitrary commands to other EC2 instances.
+        worker_task_role.add_to_policy(
+            iam.PolicyStatement(
+                actions=["ssm:SendCommand"],
+                resources=["*"],
+                conditions={
+                    "StringLike": {
+                        "ssm:resourceTag/Name": "*WireGuardGateway*",
+                    }
+                },
+            )
+        )
+        worker_task_role.add_to_policy(
+            iam.PolicyStatement(
+                actions=["ssm:GetCommandInvocation"],
+                resources=["*"],
+            )
+        )
+        # Secrets Manager read for VPN config template and runtime config.
+        worker_task_role.add_to_policy(
+            iam.PolicyStatement(
+                actions=["secretsmanager:GetSecretValue"],
                 resources=["*"],
             )
         )

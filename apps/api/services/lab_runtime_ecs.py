@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -8,8 +9,11 @@ from typing import Any
 import boto3
 from botocore.exceptions import BotoCoreError, ClientError
 
+logger = logging.getLogger(__name__)
+
 from apps.api.config import (
     AWS_REGION,
+    AWS_VPC_ID,
     LAB_ECS_ASSIGN_PUBLIC_IP,
     LAB_ECS_CLUSTER,
     LAB_ECS_CPU,
@@ -65,6 +69,8 @@ def _required_runtime_settings() -> None:
         missing.append("LAB_ECS_SECURITY_GROUP_IDS")
     if not LAB_ECS_TASK_EXECUTION_ROLE_ARN:
         missing.append("LAB_ECS_TASK_EXECUTION_ROLE_ARN")
+    if not AWS_VPC_ID:
+        missing.append("AWS_VPC_ID")
     if missing:
         raise LabRuntimeConfigError(
             "Missing required ECS lab runtime settings: " + ", ".join(missing)
@@ -163,9 +169,17 @@ def run_lab_task(
     instance: LabInstance,
     template: LabTemplate,
     task_definition_arn: str,
+    per_lab_security_group_id: str | None = None,
 ) -> str:
     _required_runtime_settings()
     container_name = _container_name(template.id)
+
+    # The shared lab SG provides egress-only baseline. The per-lab SG adds
+    # the source-specific ingress rule for this lab's owner VPN IP.
+    security_groups = [*LAB_ECS_SECURITY_GROUP_IDS]
+    if per_lab_security_group_id:
+        security_groups.append(per_lab_security_group_id)
+
     try:
         response = _ecs_client().run_task(
             cluster=LAB_ECS_CLUSTER,
@@ -177,7 +191,7 @@ def run_lab_task(
             networkConfiguration={
                 "awsvpcConfiguration": {
                     "subnets": LAB_ECS_SUBNET_IDS,
-                    "securityGroups": LAB_ECS_SECURITY_GROUP_IDS,
+                    "securityGroups": security_groups,
                     "assignPublicIp": "ENABLED" if LAB_ECS_ASSIGN_PUBLIC_IP else "DISABLED",
                 }
             },
@@ -310,6 +324,104 @@ def apply_task_snapshot(instance: LabInstance, snapshot: EcsTaskSnapshot) -> Non
         "container_last_status": snapshot.container_last_status,
         "updated_at": utc_now().isoformat(),
     }
+
+
+def create_per_lab_security_group(
+    instance_id: str,
+    source_vpn_ip: str,
+    challenge_port: int,
+) -> str:
+    """Create a dedicated EC2 security group for one lab instance.
+
+    Inbound rule: TCP/{challenge_port} from {source_vpn_ip}/32 only.
+    No inbound from the broad VPN subnet or from the WireGuard gateway SG.
+
+    Returns the new security group ID. Raises LabRuntimeAwsError on failure.
+    The caller must store the ID and call delete_per_lab_security_group on destroy.
+    """
+    if not AWS_VPC_ID:
+        raise LabRuntimeConfigError("AWS_VPC_ID is required for per-lab security group creation")
+
+    sg_name = f"orchestryx-lab-{instance_id[:8]}"
+    try:
+        response = _ec2_client().create_security_group(
+            GroupName=sg_name,
+            Description=f"Per-lab isolation: {instance_id}",
+            VpcId=AWS_VPC_ID,
+            TagSpecifications=[
+                {
+                    "ResourceType": "security-group",
+                    "Tags": [
+                        {"Key": "Project", "Value": "Orchestryx"},
+                        {"Key": "LabInstanceId", "Value": instance_id},
+                        {"Key": "ManagedBy", "Value": "orchestryx-worker"},
+                    ],
+                }
+            ],
+        )
+    except (BotoCoreError, ClientError) as exc:
+        raise LabRuntimeAwsError("Could not create per-lab security group") from exc
+
+    sg_id = response["GroupId"]
+
+    try:
+        _ec2_client().authorize_security_group_ingress(
+            GroupId=sg_id,
+            IpPermissions=[
+                {
+                    "IpProtocol": "tcp",
+                    "FromPort": challenge_port,
+                    "ToPort": challenge_port,
+                    "IpRanges": [
+                        {
+                            "CidrIp": f"{source_vpn_ip}/32",
+                            "Description": "Lab owner VPN IP only",
+                        }
+                    ],
+                }
+            ],
+        )
+    except (BotoCoreError, ClientError) as exc:
+        # Best-effort cleanup before propagating.
+        _try_delete_security_group(sg_id)
+        raise LabRuntimeAwsError("Could not configure per-lab security group ingress rule") from exc
+
+    logger.info(
+        "Created per-lab SG %s: tcp/%d from %s/32 (instance %s)",
+        sg_id,
+        challenge_port,
+        source_vpn_ip,
+        instance_id,
+    )
+    return sg_id
+
+
+def _try_delete_security_group(sg_id: str) -> None:
+    try:
+        _ec2_client().delete_security_group(GroupId=sg_id)
+    except Exception:
+        logger.warning("Best-effort delete of SG %s failed", sg_id, exc_info=True)
+
+
+def delete_per_lab_security_group(sg_id: str) -> None:
+    """Delete the per-lab security group after the ECS task has stopped.
+
+    Logs on failure rather than raising — lab destroy must not be blocked by
+    a stale or already-deleted security group.
+    """
+    if not sg_id:
+        return
+    try:
+        _ec2_client().delete_security_group(GroupId=sg_id)
+        logger.info("Deleted per-lab security group %s", sg_id)
+    except ClientError as exc:
+        code = exc.response.get("Error", {}).get("Code", "")
+        if code == "InvalidGroup.NotFound":
+            logger.info("Per-lab SG %s already absent; skipping delete", sg_id)
+        else:
+            logger.warning("Could not delete per-lab SG %s: %s", sg_id, exc)
+    except BotoCoreError as exc:
+        logger.warning("Could not delete per-lab SG %s: %s", sg_id, exc)
 
 
 def fetch_lab_logs(

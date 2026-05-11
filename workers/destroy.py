@@ -1,3 +1,4 @@
+import json
 import logging
 import time
 from datetime import datetime, timedelta, timezone
@@ -8,9 +9,11 @@ from sqlalchemy.orm import sessionmaker
 
 from apps.api.config import DATABASE_URL
 from apps.api.models.credit_transaction import CreditTransaction
+from apps.api.models.lab_access_rule import LabAccessRule
 from apps.api.models.lab_instance import LabInstance
 from apps.api.models.lab_template import LabTemplate
 from apps.api.models.user import User
+from apps.api.models.vpn_peer import VpnPeer
 from apps.api.services.lab_lifecycle import (
     LAB_STATUS_DESTROYING,
     LAB_STATUS_EXPIRED,
@@ -19,7 +22,14 @@ from apps.api.services.lab_lifecycle import (
     LAB_STATUS_STOPPED,
     set_lab_status,
 )
-from apps.api.services.lab_runtime_ecs import LabRuntimeAwsError, apply_task_snapshot, describe_task, stop_lab_task
+from apps.api.services.lab_runtime_ecs import (
+    LabRuntimeAwsError,
+    apply_task_snapshot,
+    delete_per_lab_security_group,
+    describe_task,
+    stop_lab_task,
+)
+from apps.api.services.vpn_gateway import VpnGatewayError, get_gateway_instance_id, revoke_vpn_peer
 from workers.celery_app import DESTROY_QUEUE, celery_app
 
 logger = logging.getLogger(__name__)
@@ -28,11 +38,7 @@ STARTUP_STALE_STATUSES = ["QUEUED", "PROVISIONING", "STARTING"]
 RUNTIME_ACTIVE_STATUSES = [LAB_STATUS_READY, "RUNNING"]
 
 SYNC_DATABASE_URL = DATABASE_URL.replace("+asyncpg", "")
-engine = create_engine(
-    SYNC_DATABASE_URL,
-    pool_pre_ping=True,
-    pool_recycle=300,
-)
+engine = create_engine(SYNC_DATABASE_URL, pool_pre_ping=True, pool_recycle=300)
 SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
 
 
@@ -52,6 +58,52 @@ def _finish_stopped(instance_id: str, message: str = "Lab ECS task stopped.") ->
         )
         instance.destroyed_at = datetime.now(timezone.utc)
         session.commit()
+
+
+def _revoke_access_records(session, instance_id: str) -> None:
+    """Mark VpnPeer and LabAccessRule rows as revoked for this instance."""
+    now = datetime.now(timezone.utc)
+    result = session.execute(
+        select(LabAccessRule).where(
+            LabAccessRule.instance_id == instance_id,
+            LabAccessRule.status == "active",
+        )
+    )
+    for rule in result.scalars().all():
+        rule.status = "revoked"
+        rule.revoked_at = now
+
+    result = session.execute(
+        select(VpnPeer).where(
+            VpnPeer.instance_id == instance_id,
+            VpnPeer.status == "active",
+        )
+    )
+    for peer in result.scalars().all():
+        peer.status = "revoked"
+        peer.revoked_at = now
+
+
+def _get_public_key(instance: LabInstance, session) -> str | None:
+    """Return the WireGuard public key for this lab's VPN peer.
+
+    Checks the VpnPeer record first (new path), falls back to secrets_key JSON
+    (old labs that were provisioned before the Phase 1 migration).
+    """
+    peer_result = session.execute(
+        select(VpnPeer).where(VpnPeer.instance_id == instance.id)
+    )
+    peer = peer_result.scalar_one_or_none()
+    if peer is not None:
+        return peer.public_key
+
+    # Legacy path: secrets_key JSON contained public_key before VpnPeer existed.
+    if instance.secrets_key:
+        try:
+            return json.loads(instance.secrets_key).get("public_key")
+        except Exception:
+            pass
+    return None
 
 
 @celery_app.task(queue=DESTROY_QUEUE)
@@ -196,43 +248,13 @@ def fail_stale_provisioning_labs(timeout_seconds: int = 1200) -> int:
     return failed_count
 
 
-import json
-import boto3
-
-def _revoke_vpn_peer(secrets_key: str | None) -> None:
-    if not secrets_key:
-        return
-    try:
-        secrets = json.loads(secrets_key)
-        client_pub_b64 = secrets.get("public_key")
-        if not client_pub_b64:
-            return
-            
-        from apps.api.config import AWS_REGION
-        ec2_client = boto3.client("ec2", region_name=AWS_REGION)
-        instances = ec2_client.describe_instances(
-            Filters=[
-                {"Name": "tag:Name", "Values": ["*WireGuardGateway/Instance*"]},
-                {"Name": "instance-state-name", "Values": ["running"]}
-            ]
-        )
-        if not instances.get("Reservations"):
-            return
-        vpn_instance_id = instances["Reservations"][0]["Instances"][0]["InstanceId"]
-        
-        ssm_client = boto3.client("ssm", region_name=AWS_REGION)
-        cmd = f"wg set wg0 peer {client_pub_b64} remove"
-        ssm_client.send_command(
-            InstanceIds=[vpn_instance_id],
-            DocumentName="AWS-RunShellScript",
-            Parameters={"commands": [cmd]}
-        )
-    except Exception as e:
-        logger.exception("Failed to revoke VPN peer")
-
-def destroy_lab_now(instance_id: str, cfn_stack_name: str = "", secrets_key: str | None = None) -> None:
-    """Stop the ECS Fargate task for a lab instance."""
-    del cfn_stack_name
+def destroy_lab_now(
+    instance_id: str,
+    cfn_stack_name: str = "",
+    secrets_key: str | None = None,
+) -> None:
+    """Stop the ECS Fargate task for a lab instance and clean up all associated resources."""
+    del cfn_stack_name  # legacy parameter, unused
 
     logger.info("Stopping ECS lab task for %s", instance_id)
     try:
@@ -241,7 +263,11 @@ def destroy_lab_now(instance_id: str, cfn_stack_name: str = "", secrets_key: str
             if instance is None:
                 logger.error("Lab instance %s not found while tearing down", instance_id)
                 return
+
             task_arn = instance.ecs_task_arn
+            per_lab_sg_id = instance.ecs_security_group_id
+            public_key = _get_public_key(instance, session)
+
             if not task_arn:
                 set_lab_status(
                     session,
@@ -252,7 +278,10 @@ def destroy_lab_now(instance_id: str, cfn_stack_name: str = "", secrets_key: str
                     phase="stopped",
                 )
                 instance.destroyed_at = datetime.now(timezone.utc)
+                _revoke_access_records(session, instance_id)
                 session.commit()
+                if per_lab_sg_id:
+                    delete_per_lab_security_group(per_lab_sg_id)
                 return
 
             set_lab_status(
@@ -264,9 +293,21 @@ def destroy_lab_now(instance_id: str, cfn_stack_name: str = "", secrets_key: str
                 phase="ecs-stop-task",
             )
             session.commit()
-            
-            _revoke_vpn_peer(instance.secrets_key or secrets_key)
 
+        # Revoke VPN peer (SSM with wait). Logs on failure — does not block destroy.
+        if public_key:
+            try:
+                gateway_id = get_gateway_instance_id()
+                revoke_vpn_peer(gateway_id, public_key)
+            except (VpnGatewayError, LabRuntimeAwsError):
+                logger.exception(
+                    "VPN peer revocation failed for lab %s; continuing with ECS stop",
+                    instance_id,
+                )
+        else:
+            logger.warning("No public key found for lab %s; skipping VPN revocation", instance_id)
+
+        # Stop the ECS task and wait for it.
         snapshot = stop_lab_task(task_arn, "Orchestryx lab teardown requested")
         deadline = time.monotonic() + 120
         while snapshot is not None and snapshot.last_status != "STOPPED" and time.monotonic() < deadline:
@@ -293,12 +334,27 @@ def destroy_lab_now(instance_id: str, cfn_stack_name: str = "", secrets_key: str
                 phase="ecs-stopped",
             )
             instance.destroyed_at = datetime.now(timezone.utc)
+            _revoke_access_records(session, instance_id)
             session.commit()
+
+        # Delete the per-lab security group after ECS task is stopped.
+        # Do this last so the SG is not deleted while the task ENI may still reference it.
+        if per_lab_sg_id:
+            delete_per_lab_security_group(per_lab_sg_id)
+
     except (SQLAlchemyError, LabRuntimeAwsError) as exc:
         logger.exception("Failed to tear down ECS lab %s", instance_id)
         raise RuntimeError("Could not tear down ECS lab") from exc
 
 
 @celery_app.task(queue=DESTROY_QUEUE)
-def destroy_lab(instance_id: str, cfn_stack_name: str = "", secrets_key: str | None = None) -> None:
-    destroy_lab_now(instance_id=instance_id, cfn_stack_name=cfn_stack_name, secrets_key=secrets_key)
+def destroy_lab(
+    instance_id: str,
+    cfn_stack_name: str = "",
+    secrets_key: str | None = None,
+) -> None:
+    destroy_lab_now(
+        instance_id=instance_id,
+        cfn_stack_name=cfn_stack_name,
+        secrets_key=secrets_key,
+    )

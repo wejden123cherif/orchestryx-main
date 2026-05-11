@@ -69,14 +69,16 @@ def _build_challenge_url(instance: LabInstance, template: LabTemplate | None) ->
         if LAB_ECS_PUBLIC_ACCESS_ENABLED and instance.ecs_public_ip
         else instance.ecs_private_ip
     )
-    if host:
-        return (
-            f"http://{host}:{template.challenge_port}"
-            f"{_normalize_challenge_path(template.challenge_path)}"
-        )
+    # Return None if the ECS private IP is not yet populated or is whitespace.
+    # The frontend must poll /status until both status=READY and challenge_url
+    # is non-null. Never fall back to the WireGuard gateway address (10.8.0.1)
+    # — that is not a valid lab endpoint and would silently point to the wrong host.
+    if not (host and host.strip()):
+        return None
+    host = host.strip()
 
     return (
-        f"http://10.8.0.1:{template.challenge_port}"
+        f"http://{host}:{template.challenge_port}"
         f"{_normalize_challenge_path(template.challenge_path)}"
     )
 
@@ -684,9 +686,14 @@ async def get_lab_config(
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Download runtime access config for a running lab owned by the user.
-    Lab runtime is disabled in this build, but older rows may still reference
-    Secrets Manager material.
+    Download the WireGuard client config (.conf) for a running lab.
+
+    New labs (Phase 1+): the rendered config is stored in vpn_config_blob and
+    returned directly. The private key is never re-derived after provisioning.
+
+    Legacy labs: falls back to rendering from the Secrets Manager template if
+    vpn_config_blob is absent, preserving backward compatibility with rows
+    provisioned before the Phase 1 migration.
     """
     db_user = await _get_current_db_user(db, _claims_sub(user))
     instance = await _get_owned_instance(db, instance_id, db_user.id)
@@ -697,22 +704,36 @@ async def get_lab_config(
             detail=f"Cannot download config for a lab with status {instance.status}",
         )
 
-    config = None
-    if LAB_VPN_CONFIG_INLINE:
-        config = LAB_VPN_CONFIG_INLINE
-    elif LAB_VPN_CONFIG_SECRET_ID:
-        config = _load_secret_string(LAB_VPN_CONFIG_SECRET_ID)
+    # Phase 1+ path: return the pre-rendered config stored during provisioning.
+    if instance.vpn_config_blob and instance.vpn_config_blob.strip():
+        return PlainTextResponse(
+            instance.vpn_config_blob,
+            headers={
+                "Content-Disposition": (
+                    f"attachment; filename={_vpn_config_filename(instance_id)}"
+                ),
+            },
+        )
 
-    if not config:
+    # Legacy fallback for rows provisioned before Phase 1.
+    # Uses the shared template from Secrets Manager + secrets_key values.
+    config_template = None
+    if LAB_VPN_CONFIG_INLINE:
+        config_template = LAB_VPN_CONFIG_INLINE
+    elif LAB_VPN_CONFIG_SECRET_ID:
+        config_template = _load_secret_string(LAB_VPN_CONFIG_SECRET_ID)
+
+    if not config_template:
         raise HTTPException(
             status_code=503,
             detail=(
-                "VPN config is not configured for the Fargate lab runtime. "
-                "Set LAB_VPN_CONFIG_SECRET_ID or LAB_VPN_CONFIG_INLINE to a working shared WireGuard client config."
+                "VPN config is not available for this lab. "
+                "If this is a new lab, this is a provisioning error. "
+                "If this is an older lab, set LAB_VPN_CONFIG_SECRET_ID."
             ),
         )
 
-    rendered_config = _render_vpn_config_template(config, instance)
+    rendered_config = _render_vpn_config_template(config_template, instance)
     if not rendered_config.strip():
         raise HTTPException(status_code=404, detail="Runtime access config not found")
 

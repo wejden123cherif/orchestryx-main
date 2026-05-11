@@ -1,21 +1,46 @@
-import base64
-import hashlib
+"""
+Lab provisioning worker.
+
+Ordering is critical for security:
+  1. Generate VPN keypair (pure crypto — no AWS calls yet).
+  2. Get WireGuard gateway instance ID.
+  3. Create a per-lab EC2 security group with inbound rule for the user's VPN
+     IP /32 on the challenge port only.
+  4. Register the VPN peer on the WireGuard gateway (SSM, waited on).
+  5. Launch the ECS Fargate task with the per-lab SG attached.
+  6. Poll ECS until RUNNING (get private IP).
+  7. Render the full WireGuard client config and store it in vpn_config_blob.
+  8. Write VpnPeer + LabAccessRule rows for auditability.
+  9. Mark lab READY.
+
+If any step from 3 onwards fails:
+  - credits are refunded via _mark_failed()
+  - the per-lab SG is deleted if it was created
+  - the VPN peer is NOT revoked here (gateway failure should not block failure
+    recording); a separate cleanup pass or manual intervention handles it
+"""
+
 import json
 import logging
 import time
 
-import boto3
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 from sqlalchemy import create_engine
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import sessionmaker
 
-from apps.api.config import DATABASE_URL, LAB_ECS_CLUSTER, LAB_PROVISION_TIMEOUT_SECONDS
+from apps.api.config import (
+    DATABASE_URL,
+    LAB_ECS_CLUSTER,
+    LAB_PROVISION_TIMEOUT_SECONDS,
+    LAB_VPN_CONFIG_INLINE,
+    LAB_VPN_CONFIG_SECRET_ID,
+)
 from apps.api.models.credit_transaction import CreditTransaction
+from apps.api.models.lab_access_rule import LabAccessRule
 from apps.api.models.lab_instance import LabInstance
 from apps.api.models.lab_template import LabTemplate
 from apps.api.models.user import User
+from apps.api.models.vpn_peer import VpnPeer
 from apps.api.services.lab_lifecycle import (
     LAB_STATUS_FAILED,
     LAB_STATUS_PROVISIONING,
@@ -27,24 +52,32 @@ from apps.api.services.lab_runtime_ecs import (
     LabRuntimeAwsError,
     LabRuntimeConfigError,
     apply_task_snapshot,
+    create_per_lab_security_group,
+    delete_per_lab_security_group,
     describe_task,
     register_lab_task_definition,
     run_lab_task,
+)
+from apps.api.services.vpn_gateway import (
+    VpnGatewayError,
+    VpnPeerConfig,
+    generate_vpn_peer_config,
+    get_gateway_instance_id,
+    register_vpn_peer,
+    render_vpn_config,
 )
 from workers.celery_app import PROVISION_QUEUE, celery_app
 
 logger = logging.getLogger(__name__)
 
 SYNC_DATABASE_URL = DATABASE_URL.replace("+asyncpg", "")
-engine = create_engine(
-    SYNC_DATABASE_URL,
-    pool_pre_ping=True,
-    pool_recycle=300,
-)
+engine = create_engine(SYNC_DATABASE_URL, pool_pre_ping=True, pool_recycle=300)
 SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
 
 
-def _refund_credits(session, instance: LabInstance, template: LabTemplate | None, user: User | None) -> None:
+def _refund_credits(
+    session, instance: LabInstance, template: LabTemplate | None, user: User | None
+) -> None:
     if template is None or user is None:
         return
     user.credits_balance += float(template.credits_cost)
@@ -64,7 +97,12 @@ def _mark_failed(
     user_id: str,
     message: str,
     failure_reason: str,
+    per_lab_sg_id: str | None = None,
 ) -> None:
+    """Mark the lab FAILED and refund credits. Best-effort SG cleanup runs first."""
+    if per_lab_sg_id:
+        delete_per_lab_security_group(per_lab_sg_id)
+
     with SessionLocal() as session:
         instance = session.get(LabInstance, instance_id)
         if instance is None:
@@ -88,66 +126,19 @@ def _mark_failed(
         session.commit()
 
 
-def _register_vpn_peer(instance_id: str) -> str:
-    private_key = X25519PrivateKey.generate()
-    private_bytes = private_key.private_bytes(
-        encoding=serialization.Encoding.Raw,
-        format=serialization.PrivateFormat.Raw,
-        encryption_algorithm=serialization.NoEncryption()
-    )
-    public_bytes = private_key.public_key().public_bytes(
-        encoding=serialization.Encoding.Raw,
-        format=serialization.PublicFormat.Raw
-    )
-    client_priv_b64 = base64.b64encode(private_bytes).decode('ascii')
-    client_pub_b64 = base64.b64encode(public_bytes).decode('ascii')
-
-    h = hashlib.sha256(instance_id.encode()).digest()
-    oct3 = int(h[0])
-    oct4 = (int(h[1]) % 253) + 2
-    client_ip = f"10.8.{oct3}.{oct4}"
-
-    from apps.api.config import AWS_REGION
-    ec2_client = boto3.client("ec2", region_name=AWS_REGION)
-    instances = ec2_client.describe_instances(
-        Filters=[
-            {"Name": "tag:Name", "Values": ["*WireGuardGateway/Instance*"]},
-            {"Name": "instance-state-name", "Values": ["running"]}
-        ]
-    )
-    if not instances.get("Reservations"):
-        raise RuntimeError("No running WireGuard Gateway found to register peer")
-    vpn_instance_id = instances["Reservations"][0]["Instances"][0]["InstanceId"]
-
-    ssm_client = boto3.client("ssm", region_name=AWS_REGION)
-    cmd = f"wg set wg0 peer {client_pub_b64} allowed-ips {client_ip}/32"
-    
-    ssm_client.send_command(
-        InstanceIds=[vpn_instance_id],
-        DocumentName="AWS-RunShellScript",
-        Parameters={"commands": [cmd]}
-    )
-    
-    return json.dumps({
-        "private_key": client_priv_b64,
-        "public_key": client_pub_b64,
-        "client_ip": client_ip,
-        "peer_added": True
-    })
-
-
 @celery_app.task(queue=PROVISION_QUEUE)
 def provision_lab(instance_id: str, template_id: str, user_id: str) -> None:
-    """Launch one lab as an isolated ECS Fargate task.
-
-    This replaces the removed per-lab CDK/EC2 path. Runtime work happens through
-    boto3 only: register a task definition for the template image, run one task
-    in the shared cluster/subnets/security group, poll until RUNNING, then store
-    ECS/log/network metadata on the existing lab instance row.
-    """
+    """Launch one lab as an isolated ECS Fargate task with per-lab network isolation."""
     logger.info("Starting ECS Fargate lab provisioning for %s", instance_id)
 
+    # Tracks resources created mid-flight so _mark_failed can clean them up.
+    per_lab_sg_id: str | None = None
+    peer_config: VpnPeerConfig | None = None
+
     try:
+        # ------------------------------------------------------------------ #
+        # Phase 1: Register task definition                                    #
+        # ------------------------------------------------------------------ #
         with SessionLocal() as session:
             instance = session.get(LabInstance, instance_id)
             template = session.get(LabTemplate, template_id)
@@ -174,24 +165,94 @@ def provision_lab(instance_id: str, template_id: str, user_id: str) -> None:
             instance.ecs_cluster_name = LAB_ECS_CLUSTER
             instance.ecs_task_definition_arn = task_definition_arn
             instance.ecs_container_name = container_name
+
+            # Capture values we need outside the session scope.
+            challenge_port: int = template.challenge_port
+            template_expires_at = instance.expires_at
+
+            set_lab_status(
+                session,
+                instance,
+                status=LAB_STATUS_STARTING,
+                message="Configuring VPN peer and per-lab network isolation.",
+                progress=30,
+                phase="vpn-setup",
+            )
+            session.commit()
+
+        # ------------------------------------------------------------------ #
+        # Phase 2: VPN peer keypair (pure crypto — no AWS)                    #
+        # ------------------------------------------------------------------ #
+        peer_config = generate_vpn_peer_config(instance_id)
+        gateway_instance_id = get_gateway_instance_id()
+
+        # ------------------------------------------------------------------ #
+        # Phase 3: Create per-lab security group                              #
+        # Inbound: tcp/{challenge_port} from {peer_config.client_ip}/32 only  #
+        # ------------------------------------------------------------------ #
+        per_lab_sg_id = create_per_lab_security_group(
+            instance_id=instance_id,
+            source_vpn_ip=peer_config.client_ip,
+            challenge_port=challenge_port,
+        )
+
+        with SessionLocal() as session:
+            instance = session.get(LabInstance, instance_id)
+            if instance is None:
+                logger.error("Lab instance %s disappeared before SG store", instance_id)
+                return
+            instance.ecs_security_group_id = per_lab_sg_id
+            # Store non-sensitive peer info. private_key is intentionally absent.
+            instance.secrets_key = json.dumps({
+                "public_key": peer_config.public_key,
+                "client_ip": peer_config.client_ip,
+                "peer_added": False,
+            })
+            session.commit()
+
+        # ------------------------------------------------------------------ #
+        # Phase 4: Register VPN peer (SSM, waited on — fails hard)            #
+        # ------------------------------------------------------------------ #
+        register_vpn_peer(gateway_instance_id, peer_config)
+
+        with SessionLocal() as session:
+            instance = session.get(LabInstance, instance_id)
+            if instance is None:
+                return
+            secrets = json.loads(instance.secrets_key or "{}")
+            secrets["peer_added"] = True
+            instance.secrets_key = json.dumps(secrets)
             set_lab_status(
                 session,
                 instance,
                 status=LAB_STATUS_STARTING,
                 message="Launching lab container on ECS Fargate.",
-                progress=45,
+                progress=50,
                 phase="ecs-run-task",
             )
             session.commit()
+
+        # ------------------------------------------------------------------ #
+        # Phase 5: Launch ECS task with the per-lab SG                        #
+        # ------------------------------------------------------------------ #
+        with SessionLocal() as session:
+            instance = session.get(LabInstance, instance_id)
+            template = session.get(LabTemplate, template_id)
+            if instance is None or template is None:
+                return
 
             task_arn = run_lab_task(
                 instance=instance,
                 template=template,
                 task_definition_arn=task_definition_arn,
+                per_lab_security_group_id=per_lab_sg_id,
             )
             instance.ecs_task_arn = task_arn
             session.commit()
 
+        # ------------------------------------------------------------------ #
+        # Phase 6: Poll ECS until RUNNING                                     #
+        # ------------------------------------------------------------------ #
         deadline = time.monotonic() + LAB_PROVISION_TIMEOUT_SECONDS
         snapshot = None
         while time.monotonic() < deadline:
@@ -218,11 +279,16 @@ def provision_lab(instance_id: str, template_id: str, user_id: str) -> None:
             if snapshot.last_status == "RUNNING":
                 break
             if snapshot.last_status == "STOPPED":
-                raise LabRuntimeAwsError(snapshot.stopped_reason or "ECS task stopped before becoming ready")
+                raise LabRuntimeAwsError(
+                    snapshot.stopped_reason or "ECS task stopped before becoming ready"
+                )
             time.sleep(3)
         else:
             raise LabRuntimeAwsError("Timed out waiting for ECS task to reach RUNNING")
 
+        # ------------------------------------------------------------------ #
+        # Phase 7: Render VPN config + write VpnPeer / LabAccessRule          #
+        # ------------------------------------------------------------------ #
         with SessionLocal() as session:
             instance = session.get(LabInstance, instance_id)
             if instance is None:
@@ -230,25 +296,70 @@ def provision_lab(instance_id: str, template_id: str, user_id: str) -> None:
                 return
             if snapshot is not None:
                 apply_task_snapshot(instance, snapshot)
-            
-            try:
-                instance.secrets_key = _register_vpn_peer(instance_id)
-            except Exception as exc:
-                logger.exception("Failed to register VPN peer for lab %s", instance_id)
-                raise LabRuntimeAwsError("Failed to configure VPN routing") from exc
+
+            lab_private_ip = instance.ecs_private_ip or ""
+
+            # Render the full WireGuard client config now that we have the lab IP.
+            # peer_config.private_key is used here and ONLY here — never written to DB.
+            vpn_config = render_vpn_config(
+                peer_config=peer_config,
+                lab_private_ip=lab_private_ip,
+                vpn_config_secret_id=LAB_VPN_CONFIG_SECRET_ID,
+                vpn_config_inline=LAB_VPN_CONFIG_INLINE,
+            )
+            if vpn_config:
+                instance.vpn_config_blob = vpn_config
+            else:
+                logger.warning(
+                    "No VPN config template configured; /config will return 503 for lab %s",
+                    instance_id,
+                )
+
+            # Audit records — public_key and client_ip only, never private_key.
+            vpn_peer = VpnPeer(
+                instance_id=instance_id,
+                user_id=user_id,
+                public_key=peer_config.public_key,
+                assigned_vpn_ip=peer_config.client_ip,
+                status="active",
+            )
+            session.add(vpn_peer)
+            session.flush()  # populate vpn_peer.id
+
+            # Update secrets_key to include the peer record ID for cross-reference.
+            instance.secrets_key = json.dumps({
+                "public_key": peer_config.public_key,
+                "client_ip": peer_config.client_ip,
+                "peer_added": True,
+                "vpn_peer_id": vpn_peer.id,
+            })
+
+            access_rule = LabAccessRule(
+                instance_id=instance_id,
+                user_id=user_id,
+                vpn_peer_id=vpn_peer.id,
+                source_vpn_ip=peer_config.client_ip,
+                destination_lab_ip=lab_private_ip or None,
+                allowed_ports=[challenge_port],
+                security_group_id=per_lab_sg_id,
+                status="active",
+                expires_at=template_expires_at,
+            )
+            session.add(access_rule)
 
             set_lab_status(
                 session,
                 instance,
                 status=LAB_STATUS_READY,
-                message="Lab is running and VPN routing is configured.",
+                message="Lab is running. Download the VPN config to connect.",
                 progress=100,
                 phase="ecs-ready",
             )
             session.commit()
 
-        logger.info("Lab %s is READY on ECS task %s", instance_id, task_arn)
-    except (LabRuntimeConfigError, LabRuntimeAwsError) as exc:
+        logger.info("Lab %s is READY (task=%s, vpn_ip=%s)", instance_id, task_arn, peer_config.client_ip)
+
+    except (LabRuntimeConfigError, LabRuntimeAwsError, VpnGatewayError) as exc:
         logger.exception("ECS lab provisioning failed for %s", instance_id)
         try:
             _mark_failed(
@@ -257,11 +368,14 @@ def provision_lab(instance_id: str, template_id: str, user_id: str) -> None:
                 user_id=user_id,
                 message="Lab provisioning failed. Credits were refunded.",
                 failure_reason=str(exc),
+                per_lab_sg_id=per_lab_sg_id,
             )
         except SQLAlchemyError:
             logger.exception("Database compensation failed after ECS provisioning failure")
             raise
         raise
     except SQLAlchemyError as exc:
-        logger.exception("Database write failed while provisioning ECS lab")
+        logger.exception("Database write failed while provisioning ECS lab %s", instance_id)
+        if per_lab_sg_id:
+            delete_per_lab_security_group(per_lab_sg_id)
         raise RuntimeError("Could not update lab provisioning state") from exc

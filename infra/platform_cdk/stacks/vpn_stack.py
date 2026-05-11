@@ -7,12 +7,20 @@ from constructs import Construct
 
 from wireguard_gateway import WireGuardGateway
 
+_VPN_CLIENT_CIDR = "10.8.0.0/16"
+
 
 class VpnStack(cdk.Stack):
-    """Shared WireGuard gateway foundation.
+    """Shared WireGuard gateway operating in routed (non-NAT) mode.
 
-    This is intentionally disabled by default while per-lab WireGuard behavior
-    remains owned by the existing lab CDK app.
+    Route table entries are added to all private subnets so that VPC-internal
+    lab containers can send response packets back to VPN clients via the gateway.
+    Source/destination check is disabled on the gateway instance so it can
+    forward these packets.
+
+    The gateway does NOT MASQUERADE traffic destined for the VPC, so the
+    source VPN IP is preserved end-to-end. Per-lab EC2 security groups rely
+    on this to enforce source_vpn_ip/32 → challenge_port rules.
     """
 
     def __init__(
@@ -29,7 +37,9 @@ class VpnStack(cdk.Stack):
         super().__init__(scope, construct_id, **kwargs)
 
         vpn = config.get("vpn", {})
+        network = config.get("network", {})
         prefix = config.get("naming", {}).get("resource_prefix", f"orchestryx-{env_name}")
+        vpc_cidr = network.get("cidr", "10.80.0.0/16")
 
         gateway = WireGuardGateway(
             self,
@@ -38,6 +48,7 @@ class VpnStack(cdk.Stack):
             resource_prefix=prefix,
             instance_type=vpn.get("instance_type", "t3.micro"),
             enabled=bool(vpn.get("enabled", False)),
+            vpc_cidr=vpc_cidr,
         )
         self.gateway_security_group = gateway.security_group
 
@@ -52,6 +63,18 @@ class VpnStack(cdk.Stack):
                 ),
             )
 
+            # Add a route in every private subnet: 10.8.0.0/16 → WireGuard instance.
+            # This allows lab ECS tasks (in private subnets) to respond to VPN clients
+            # without each response leaving via the NAT gateway or being dropped.
+            for i, subnet in enumerate(vpc.private_subnets):
+                ec2.CfnRoute(
+                    self,
+                    f"VpnClientRoute{i}",
+                    route_table_id=subnet.route_table.route_table_id,
+                    destination_cidr_block=_VPN_CLIENT_CIDR,
+                    instance_id=gateway.instance.instance_id,
+                )
+
         cdk.CfnOutput(
             self,
             "WireGuardSecurityGroupId",
@@ -62,4 +85,11 @@ class VpnStack(cdk.Stack):
             "WireGuardPrivateDnsName",
             value=vpn.get("private_dns_name", "vpn"),
         )
+        if gateway.instance is not None:
+            cdk.CfnOutput(
+                self,
+                "WireGuardInstanceId",
+                value=gateway.instance.instance_id,
+                description="Instance ID of the WireGuard gateway for SSM scoping",
+            )
 

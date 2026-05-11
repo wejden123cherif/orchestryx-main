@@ -74,6 +74,16 @@ class LabInstance(Base):
     ecs_started_at = Column(DateTime(timezone=True), nullable=True)
     ecs_stopped_at = Column(DateTime(timezone=True), nullable=True)
 
+    # Per-lab EC2 security group ID created during provisioning for network isolation.
+    # Deleted on lab destroy. Stored here so the worker can clean it up.
+    ecs_security_group_id = Column(String, nullable=True)
+
+    # Rendered WireGuard client config (.conf file contents) including the client
+    # private key. Populated once during provisioning, returned via /config, then
+    # this field can be cleared after first download. The private key is NOT stored
+    # anywhere else — not in secrets_key, not in any other column.
+    vpn_config_blob = Column(Text, nullable=True)
+
     # Lifecycle timing used for troubleshooting slow starts and cleanup jobs.
     provisioning_started_at = Column(DateTime(timezone=True), nullable=True)
     ready_at = Column(DateTime(timezone=True), nullable=True)
