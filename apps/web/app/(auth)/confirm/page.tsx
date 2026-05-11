@@ -78,7 +78,7 @@ function ConfirmForm() {
       altHref="/login"
       altLabel="Return to sign in"
     >
-      <form onSubmit={handleSubmit} className="space-y-5">
+      <form onSubmit={handleSubmit} className="space-y-4">
         {errorMessage ? (
           <p className="rounded-lg border border-destructive/25 bg-destructive/5 px-3.5 py-2.5 text-[13px] text-destructive">
             {errorMessage}
@@ -94,7 +94,7 @@ function ConfirmForm() {
             onChange={(event) => setEmail(event.target.value)}
             autoComplete="email"
             required
-            className="h-10"
+            className="h-10 transition-colors"
           />
         </div>
 
@@ -120,7 +120,7 @@ function ConfirmForm() {
                 }}
                 inputMode="numeric"
                 autoComplete="one-time-code"
-                className="mono h-12 rounded-lg border border-input bg-card text-center text-lg text-foreground shadow-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
+                className="mono h-12 rounded-xl border border-input bg-card text-center text-lg text-foreground shadow-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
                 aria-label={`Digit ${index + 1}`}
               />
             ))}

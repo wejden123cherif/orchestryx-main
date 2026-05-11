@@ -10,10 +10,10 @@ export function Badge({
 }) {
   const tones = {
     neutral: "border-border bg-secondary/60 text-muted-foreground",
-    blue: "border-primary/20 bg-primary/6 text-primary",
-    green: "border-success/20 bg-success/6 text-success",
-    amber: "border-warning/20 bg-warning/6 text-warning",
-    red: "border-destructive/20 bg-destructive/6 text-destructive",
+    blue: "border-primary/25 bg-primary/10 text-primary",
+    green: "border-success/25 bg-success/10 text-success",
+    amber: "border-warning/25 bg-warning/10 text-warning",
+    red: "border-destructive/25 bg-destructive/10 text-destructive",
   };
 
   return (

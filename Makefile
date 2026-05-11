@@ -9,12 +9,22 @@
 
 # ── AWS / ECR configuration ───────────────────────────────────────────────────
 # Read from environment so the Makefile works across accounts without edits.
-# Set these in your shell or .env before running make targets:
+# Set these in your shell or source .env.dev.generated before running targets:
 #   export AWS_ACCOUNT_ID=123456789012
 #   export AWS_REGION=eu-central-1
 AWS_ACCOUNT_ID ?= $(shell aws sts get-caller-identity --query Account --output text 2>/dev/null || echo "ACCOUNT_ID_NOT_SET")
 AWS_REGION     ?= eu-central-1
 ECR_REGISTRY    = $(AWS_ACCOUNT_ID).dkr.ecr.$(AWS_REGION).amazonaws.com
+
+# ── ECS runtime names (dev defaults; override from .env.dev.generated) ────────
+# Source .env.dev.generated in your shell before running ecs/log targets:
+#   . .env.dev.generated  (bash/zsh)
+#   Get-Content .env.dev.generated | ForEach-Object { ... }  (PowerShell - use deploy.ps1 instead)
+CLUSTER_NAME     ?= orchestryx-dev
+API_SERVICE      ?= orchestryx-dev-api-service
+WORKER_SERVICE   ?= orchestryx-dev-worker-service
+API_LOG_GROUP    ?= /ecs/orchestryx-dev-api
+WORKER_LOG_GROUP ?= /ecs/orchestryx-dev-worker
 
 # ── Database migrations ───────────────────────────────────────────────────────
 
@@ -54,6 +64,11 @@ web-lint:
 
 # ── Deployment ────────────────────────────────────────────────────────────────
 
+# Linux/macOS/WSL image deploy aliases.
+# On Windows use: .\scripts\windows\deploy.ps1 [images|api|worker|all]
+# Prerequisite: source .env.dev.generated and ensure ECS services exist before
+# running "all", "api", or "worker" targets. Use "images" target to push without
+# triggering an ECS redeployment (safe before EcsPlatformStack is deployed).
 deploy:
 	./scripts/linux/deploy.sh
 
@@ -82,24 +97,24 @@ platform-destroy-dev:
 	cd infra/platform_cdk && cdk destroy --all -c env=dev
 
 logs-api:
-	aws logs tail /ecs/orchestryx-api --follow --region $(AWS_REGION)
+	aws logs tail $(API_LOG_GROUP) --follow --region $(AWS_REGION)
 
 logs-worker:
-	aws logs tail /ecs/orchestryx-worker --follow --region $(AWS_REGION)
+	aws logs tail $(WORKER_LOG_GROUP) --follow --region $(AWS_REGION)
 
 status:
 	aws ecs describe-services \
-	  --cluster orchestryx \
-	  --services orchestryx-api-service orchestryx-worker-service \
+	  --cluster $(CLUSTER_NAME) \
+	  --services $(API_SERVICE) $(WORKER_SERVICE) \
 	  --region $(AWS_REGION) \
 	  --query "services[*].{name:serviceName,running:runningCount,pending:pendingCount,desired:desiredCount}"
 
 restart-api:
-	aws ecs update-service --cluster orchestryx --service orchestryx-api-service \
+	aws ecs update-service --cluster $(CLUSTER_NAME) --service $(API_SERVICE) \
 	  --force-new-deployment --region $(AWS_REGION)
 
 restart-worker:
-	aws ecs update-service --cluster orchestryx --service orchestryx-worker-service \
+	aws ecs update-service --cluster $(CLUSTER_NAME) --service $(WORKER_SERVICE) \
 	  --force-new-deployment --region $(AWS_REGION)
 
 setup-aws:

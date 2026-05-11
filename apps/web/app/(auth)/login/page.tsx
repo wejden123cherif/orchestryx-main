@@ -61,7 +61,7 @@ function LoginForm() {
           </p>
         ) : null}
 
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form onSubmit={handleSubmit} className="space-y-3.5">
           <div className="space-y-1.5">
             <Label htmlFor="email">Email</Label>
             <Input
@@ -73,7 +73,7 @@ function LoginForm() {
               autoComplete="email"
               spellCheck={false}
               required
-              className="h-10"
+              className="h-10 transition-colors"
             />
           </div>
 
@@ -108,7 +108,7 @@ function LoginForm() {
 
         <Link
           href="/confirm"
-          className="flex items-center justify-center gap-2 rounded-lg border border-border bg-card px-4 py-2.5 text-[13px] font-medium text-muted-foreground shadow-sm transition hover:bg-secondary hover:text-foreground"
+          className="flex h-10 items-center justify-center gap-2 rounded-xl border border-border bg-card px-4 text-[13px] font-medium text-muted-foreground shadow-sm transition hover:bg-secondary hover:text-foreground"
         >
           Confirm email verification code
           <ArrowRight className="h-3.5 w-3.5" />

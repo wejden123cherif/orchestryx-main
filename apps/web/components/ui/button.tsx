@@ -14,10 +14,10 @@ export const buttonVariants = {
 };
 
 const sizes = {
-  sm: "h-8 gap-1.5 rounded-lg px-3 text-xs",
-  md: "h-9 gap-2 rounded-lg px-4 text-sm",
+  sm: "h-9 gap-1.5 rounded-lg px-3 text-xs",
+  md: "h-10 gap-2 rounded-xl px-4 text-sm",
   lg: "h-11 gap-2 rounded-xl px-5 text-sm",
-  icon: "h-9 w-9 rounded-lg p-0",
+  icon: "h-10 w-10 rounded-xl p-0",
 };
 
 export function Button({

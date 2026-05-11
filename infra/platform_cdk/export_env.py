@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
 from config_loader import load_config
@@ -96,7 +97,20 @@ def main() -> None:
         outputs_path = app_dir / outputs_path
     dotenv_path = Path(args.output) if args.output else repo_root / f".env.{args.env}.generated"
 
-    outputs = json.loads(outputs_path.read_text(encoding="utf-8"))
+    try:
+        outputs = json.loads(outputs_path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        print(
+            f"Error: CDK outputs file not found: {outputs_path}\n\n"
+            "Generate it by deploying with --outputs-file:\n"
+            f"  cd infra/platform_cdk\n"
+            f"  cdk deploy OrchestryxDev-DatabaseStack -c env={args.env} "
+            f"--outputs-file {args.outputs_file}\n\n"
+            "To capture all stack outputs at once (only after images are pushed):\n"
+            f"  cdk deploy --all -c env={args.env} --outputs-file {args.outputs_file}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
     stack_prefix = config.get("naming", {}).get("stack_name_prefix", f"Orchestryx{args.env.title()}")
     region = config.get("aws", {}).get("region", "")
     if not region:

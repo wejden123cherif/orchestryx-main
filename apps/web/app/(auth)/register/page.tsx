@@ -76,7 +76,7 @@ export default function RegisterPage() {
           </p>
         ) : null}
 
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form onSubmit={handleSubmit} className="space-y-3.5">
           <div className="space-y-1.5">
             <Label htmlFor="email">Work email</Label>
             <Input
@@ -88,7 +88,7 @@ export default function RegisterPage() {
               autoComplete="email"
               spellCheck={false}
               required
-              className="h-10"
+              className="h-10 transition-colors"
             />
           </div>
 

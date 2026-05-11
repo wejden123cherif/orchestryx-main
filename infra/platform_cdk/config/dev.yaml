@@ -39,7 +39,7 @@ ecs:
   desired_count: 1
   cpu: 512
   memory_mib: 1024
-  runtime_secret_name: orchestryx/api/env
+  runtime_secret_name: orchestryx/dev/api/env
   lab_runtime:
     cpu: 512
     memory_mib: 1024

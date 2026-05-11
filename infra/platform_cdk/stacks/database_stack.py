@@ -47,7 +47,7 @@ class DatabaseStack(cdk.Stack):
                     "cluster_identifier", f"orchestryx-{env_name}-db"
                 ),
                 engine=rds.DatabaseClusterEngine.aurora_postgres(
-                    version=rds.AuroraPostgresEngineVersion.VER_15_4
+                    version=rds.AuroraPostgresEngineVersion.VER_15_8
                 ),
                 writer=rds.ClusterInstance.serverless_v2("writer"),
                 serverless_v2_min_capacity=float(database.get("min_acu", 0.5)),

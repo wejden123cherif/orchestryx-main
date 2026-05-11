@@ -125,12 +125,12 @@ export default function LabsPage() {
     <div className="space-y-6">
       <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <h1 className="text-3xl text-foreground">My Labs</h1>
+          <h1 className="text-2xl font-semibold tracking-tight text-foreground">My Labs</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             Active environments, access config, and lifecycle controls.
           </p>
         </div>
-        <Button type="button" variant="secondary" onClick={loadLabs} disabled={isLoading}>
+        <Button type="button" variant="secondary" size="sm" onClick={loadLabs} disabled={isLoading}>
           Refresh
         </Button>
       </header>
