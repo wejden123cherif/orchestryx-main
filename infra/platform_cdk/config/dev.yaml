@@ -52,8 +52,10 @@ vpn:
   private_dns_name: vpn.orchestryx.internal
 alb:
   # Internet-facing Application Load Balancer for the API service.
-  # HTTP only for dev. Add ACM cert + HTTPS listener when api.orchestryx.cloud is ready.
   enabled: true
+  domain_name: api.orchestryx.cloud
+  certificate_arn: arn:aws:acm:eu-central-1:254076817005:certificate/6c40284c-f70e-4841-8c03-4347237b6e03
+  redirect_http_to_https: true
 observability:
   api_log_group_name: /ecs/orchestryx-dev-api
   worker_log_group_name: /ecs/orchestryx-dev-worker

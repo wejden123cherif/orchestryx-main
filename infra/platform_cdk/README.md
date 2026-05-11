@@ -242,6 +242,113 @@ without any VPN or bastion host.  They refuse to run unless `ORCHESTRYX_ENV=dev`
 
 ---
 
+## HTTPS and Vercel DNS Setup
+
+Orchestryx uses Vercel for the frontend (`orchestryx.cloud`, `www.orchestryx.cloud`) and
+AWS ALB for the backend API (`api.orchestryx.cloud`).  There is no Cloudflare layer.
+
+### ACM certificate
+
+The ACM certificate for `api.orchestryx.cloud` is in `eu-central-1` (same region as the
+ALB, which is required for ALB certificates).  It is referenced directly in
+`config/dev.yaml` under `alb.certificate_arn`.
+
+The certificate requires a DNS CNAME validation record.  AWS Console → ACM → the
+certificate → "Create records in Route 53" does **not** apply here because DNS is
+managed by Vercel.  Add the ACM-provided CNAME in Vercel DNS manually:
+
+| Type | Name | Value |
+|------|------|-------|
+| CNAME | `_acm-challenge.api` (or the exact name ACM shows) | `<validation-value>.acm-validations.aws.` |
+
+Check the current validation status:
+
+```bash
+aws acm describe-certificate \
+  --certificate-arn arn:aws:acm:eu-central-1:254076817005:certificate/6c40284c-f70e-4841-8c03-4347237b6e03 \
+  --region eu-central-1 \
+  --query "Certificate.DomainValidationOptions"
+```
+
+### Vercel DNS records
+
+Add these records in the Vercel project DNS panel for `orchestryx.cloud`:
+
+| Type | Name | Value | Notes |
+|------|------|-------|-------|
+| CNAME | `api` | `orchestryx-dev-api-alb-736505199.eu-central-1.elb.amazonaws.com` | Routes `api.orchestryx.cloud` to the ALB |
+
+Vercel automatically serves `orchestryx.cloud` and `www.orchestryx.cloud` — no
+additional DNS records are needed for the frontend.
+
+### Vercel frontend environment variables
+
+In the Vercel project settings → Environment Variables, set for **Production**:
+
+```
+NEXT_PUBLIC_API_URL=https://api.orchestryx.cloud
+```
+
+For Preview deployments, set it to the preview ALB URL or a staging equivalent so
+that preview branches also work end-to-end.
+
+### Backend CORS configuration
+
+The runtime secret `orchestryx/dev/api/env` in Secrets Manager must include:
+
+```json
+"CORS_ALLOWED_ORIGINS": "https://orchestryx.cloud,https://www.orchestryx.cloud,https://<your-vercel-preview-domain>.vercel.app"
+```
+
+Update the secret via CLI:
+
+```bash
+aws secretsmanager put-secret-value \
+  --secret-id orchestryx/dev/api/env \
+  --region eu-central-1 \
+  --secret-string "$(
+    aws secretsmanager get-secret-value \
+      --secret-id orchestryx/dev/api/env \
+      --region eu-central-1 \
+      --query SecretString \
+      --output text \
+    | python3 -c "
+import json, sys
+s = json.load(sys.stdin)
+s['CORS_ALLOWED_ORIGINS'] = 'https://orchestryx.cloud,https://www.orchestryx.cloud'
+print(json.dumps(s))
+"
+  )"
+```
+
+After updating the secret, force a new API deployment so ECS picks it up:
+
+```powershell
+.\scripts\windows\deploy.ps1 api
+```
+
+```bash
+ORCHESTRYX_ENV=dev ./scripts/linux/deploy.sh api
+```
+
+### Verification
+
+Once the CNAME propagates and ACM validation is `SUCCESS`:
+
+```bash
+# Health check (always 200)
+curl https://api.orchestryx.cloud/health
+
+# Ready check (200 after migrations have run)
+curl https://api.orchestryx.cloud/ready
+
+# Confirm HTTP redirects to HTTPS
+curl -I http://api.orchestryx.cloud/health
+# Expected: HTTP/1.1 301 Moved Permanently → Location: https://api.orchestryx.cloud/health
+```
+
+---
+
 Destroy dev safely when no longer needed:
 
 ```bash

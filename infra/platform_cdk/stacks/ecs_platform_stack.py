@@ -376,10 +376,13 @@ class EcsPlatformStack(cdk.Stack):
             )
 
         # ── Internet-facing Application Load Balancer ──────────────────────
-        # Routes public HTTP traffic to the API service in private subnets.
+        # Routes public HTTPS traffic to the API service in private subnets.
         # Worker, lab, and VPN resources are never attached to this ALB.
         alb_config = config.get("alb", {})
         alb_enabled = bool(alb_config.get("enabled", False)) and services_enabled
+        certificate_arn: str = alb_config.get("certificate_arn", "") or ""
+        domain_name: str = alb_config.get("domain_name", "") or ""
+        redirect_http = bool(alb_config.get("redirect_http_to_https", False)) and bool(certificate_arn)
 
         self.alb: elbv2.ApplicationLoadBalancer | None = None
 
@@ -397,7 +400,13 @@ class EcsPlatformStack(cdk.Stack):
                 ec2.Port.tcp(80),
                 "Allow HTTP from internet",
             )
-            # Allow the ALB to forward requests into the API container port.
+            if certificate_arn:
+                alb_security_group.add_ingress_rule(
+                    ec2.Peer.any_ipv4(),
+                    ec2.Port.tcp(443),
+                    "Allow HTTPS from internet",
+                )
+            # Allow the ALB to reach the API container.
             # open=False on add_listener prevents CDK from adding a duplicate rule.
             self.api_security_group.add_ingress_rule(
                 alb_security_group,
@@ -415,22 +424,53 @@ class EcsPlatformStack(cdk.Stack):
                 load_balancer_name=f"{prefix}-api-alb",
             )
 
-            http_listener = self.alb.add_listener("HttpListener", port=80, open=False)
-            http_listener.add_targets(
-                "ApiTargets",
-                port=int(ecs_config.get("api_container_port", 8000)),
-                protocol=elbv2.ApplicationProtocol.HTTP,
-                targets=[self.api_service.service],
-                deregistration_delay=cdk.Duration.seconds(30),
-                health_check=elbv2.HealthCheck(
-                    path="/health",
-                    healthy_http_codes="200",
-                    interval=cdk.Duration.seconds(30),
-                    timeout=cdk.Duration.seconds(5),
-                    healthy_threshold_count=2,
-                    unhealthy_threshold_count=3,
-                ),
+            container_port = int(ecs_config.get("api_container_port", 8000))
+            api_health_check = elbv2.HealthCheck(
+                path="/health",
+                healthy_http_codes="200",
+                interval=cdk.Duration.seconds(30),
+                timeout=cdk.Duration.seconds(5),
+                healthy_threshold_count=2,
+                unhealthy_threshold_count=3,
             )
+
+            http_listener = self.alb.add_listener("HttpListener", port=80, open=False)
+            if redirect_http:
+                # Permanent 301 redirect; all traffic flows through the HTTPS listener.
+                http_listener.add_action(
+                    "RedirectToHttps",
+                    action=elbv2.ListenerAction.redirect(
+                        protocol="HTTPS",
+                        port="443",
+                        permanent=True,
+                    ),
+                )
+            else:
+                # HTTP-only fallback (no certificate configured).
+                http_listener.add_targets(
+                    "ApiTargets",
+                    port=container_port,
+                    protocol=elbv2.ApplicationProtocol.HTTP,
+                    targets=[self.api_service.service],
+                    deregistration_delay=cdk.Duration.seconds(30),
+                    health_check=api_health_check,
+                )
+
+            if certificate_arn:
+                https_listener = self.alb.add_listener(
+                    "HttpsListener",
+                    port=443,
+                    open=False,
+                    certificates=[elbv2.ListenerCertificate.from_arn(certificate_arn)],
+                )
+                https_listener.add_targets(
+                    "ApiTargetsHttps",
+                    port=container_port,
+                    protocol=elbv2.ApplicationProtocol.HTTP,
+                    targets=[self.api_service.service],
+                    deregistration_delay=cdk.Duration.seconds(30),
+                    health_check=api_health_check,
+                )
 
         # ── Outputs ────────────────────────────────────────────────────────
         cdk.CfnOutput(self, "EcsClusterName", value=self.cluster.cluster_name)
@@ -461,8 +501,9 @@ class EcsPlatformStack(cdk.Stack):
                 "ApiLoadBalancerDnsName",
                 value=self.alb.load_balancer_dns_name,
             )
-            cdk.CfnOutput(
-                self,
-                "ApiBaseUrl",
-                value=cdk.Fn.join("", ["http://", self.alb.load_balancer_dns_name]),
+            api_base_url = (
+                f"https://{domain_name}"
+                if domain_name
+                else cdk.Fn.join("", ["http://", self.alb.load_balancer_dns_name])
             )
+            cdk.CfnOutput(self, "ApiBaseUrl", value=api_base_url)
