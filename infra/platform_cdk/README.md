@@ -188,6 +188,60 @@ aws logs tail /ecs/orchestryx-dev-worker --since 15m --region "$AWS_REGION"
 curl http://<dev-api-endpoint>/health
 ```
 
+## Recovering from a Broken Migration State
+
+If a migration fails partway through (e.g. a `DuplicateTableError`, a partial schema,
+or a corrupted `alembic_version` table), the fastest recovery path in dev is:
+
+1. **Reset the schema** — drops and recreates the public schema inside ECS Fargate
+   (Aurora is private; no laptop access):
+
+   ```powershell
+   # Windows
+   .\scripts\windows\reset-dev-db.ps1
+   # With -Force to skip the confirmation prompt:
+   .\scripts\windows\reset-dev-db.ps1 -Force
+   ```
+
+   ```bash
+   # Linux / macOS / WSL
+   ./scripts/linux/reset-dev-db.sh
+   # With --force to skip the confirmation prompt:
+   ./scripts/linux/reset-dev-db.sh --force
+   ```
+
+2. **Re-run migrations** to rebuild the schema from scratch:
+
+   ```powershell
+   .\scripts\windows\run-migrations.ps1
+   ```
+
+   ```bash
+   ./scripts/linux/run-migrations.sh
+   ```
+
+3. **Restart the API** so it picks up the fresh schema:
+
+   ```powershell
+   .\scripts\windows\deploy.ps1 api
+   ```
+
+   ```bash
+   ORCHESTRYX_ENV=dev ./scripts/linux/deploy.sh api
+   ```
+
+4. **Verify** that `/ready` returns 200:
+
+   ```bash
+   curl http://$ORCHESTRYX_API_ALB_DNS/ready
+   ```
+
+The reset scripts run the Python DROP/CREATE SCHEMA sequence inside the migration
+container (same image and secret as the API), so they have identical Aurora access
+without any VPN or bastion host.  They refuse to run unless `ORCHESTRYX_ENV=dev`.
+
+---
+
 Destroy dev safely when no longer needed:
 
 ```bash

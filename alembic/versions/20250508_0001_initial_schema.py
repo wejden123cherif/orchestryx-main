@@ -30,6 +30,9 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     # ── users ────────────────────────────────────────────────────────────
+    # Uniqueness on email is enforced by the unique index below (ix_users_email).
+    # A separate UniqueConstraint("email") would create a redundant backing index
+    # with a different name; it is removed here to keep exactly one index per column.
     op.create_table(
         "users",
         sa.Column("id", sa.String(), nullable=False),
@@ -48,7 +51,6 @@ def upgrade() -> None:
         ),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("cognito_sub"),
-        sa.UniqueConstraint("email"),
     )
     op.create_index(op.f("ix_users_email"), "users", ["email"], unique=True)
 
@@ -78,13 +80,14 @@ def upgrade() -> None:
     )
 
     # ── lab_flags ────────────────────────────────────────────────────────
+    # Uniqueness on template_id is enforced by the unique index below.
+    # UniqueConstraint would add a redundant second backing index.
     op.create_table(
         "lab_flags",
         sa.Column("id", sa.String(), nullable=False),
         sa.Column("template_id", sa.String(), nullable=False),
         sa.Column("flag_hash", sa.String(), nullable=False),
         sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("template_id"),
     )
     op.create_index(op.f("ix_lab_flags_template_id"), "lab_flags", ["template_id"], unique=True)
 
@@ -147,10 +150,14 @@ def upgrade() -> None:
     )
 
     # ── credit_transactions ──────────────────────────────────────────────
+    # index=True must NOT appear on any sa.Column() inside op.create_table().
+    # SQLAlchemy emits a CREATE INDEX for it immediately, then op.create_index()
+    # below tries to create the same name again → DuplicateTableError.
+    # All indexes are declared explicitly via op.create_index() only.
     op.create_table(
         "credit_transactions",
         sa.Column("id", sa.String(), nullable=False),
-        sa.Column("user_id", sa.String(), nullable=False, index=True),
+        sa.Column("user_id", sa.String(), nullable=False),
         sa.Column("delta", sa.Float(), nullable=False),
         sa.Column("reason", sa.Text(), nullable=False),
         sa.Column(
