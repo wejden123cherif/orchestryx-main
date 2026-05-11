@@ -15,7 +15,7 @@ class WireGuardGateway(Construct):
         tcp/{challenge_port} from {user_vpn_ip}/32
     which would be impossible if the gateway used SNAT/MASQUERADE.
 
-    Route table entries for 10.8.0.0/16 → this instance are added in VpnStack
+    Route table entries for 10.8.0.0/16 -> this instance are added in VpnStack
     for all private subnets so that lab containers can respond back to VPN clients.
 
     Source/destination check is disabled on the EC2 instance so it can forward
@@ -40,7 +40,7 @@ class WireGuardGateway(Construct):
             "SecurityGroup",
             vpc=vpc,
             security_group_name=f"{resource_prefix}-wireguard-sg",
-            description="WireGuard gateway — UDP 51820 inbound for VPN clients",
+            description="WireGuard gateway - UDP 51820 inbound for VPN clients",
             allow_all_outbound=True,
         )
         self.security_group.add_ingress_rule(
@@ -104,7 +104,7 @@ class WireGuardGateway(Construct):
                 "systemctl enable wg-quick@wg0",
                 "systemctl start wg-quick@wg0",
                 # Store the client config template in Secrets Manager.
-                # AllowedIPs uses {lab_private_ip}/32 — NOT the VPC CIDR — so
+                # AllowedIPs uses {lab_private_ip}/32 -- NOT the VPC CIDR -- so
                 # each connected client routes only to their own lab, not all labs.
                 "cat <<EOF > /tmp/template.txt",
                 "[Interface]",

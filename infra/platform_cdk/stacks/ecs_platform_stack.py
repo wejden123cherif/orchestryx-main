@@ -46,7 +46,7 @@ class EcsPlatformStack(cdk.Stack):
         destroy_queue: sqs.IQueue,
         user_pool,
         user_pool_client,
-        database_security_group: ec2.ISecurityGroup,
+        database_security_group_id: str,
         api_log_group: logs.ILogGroup,
         worker_log_group: logs.ILogGroup,
         lab_log_group: logs.ILogGroup,
@@ -86,18 +86,28 @@ class EcsPlatformStack(cdk.Stack):
         # Shared lab SG: egress-only baseline.
         # Per-lab security groups (created by the worker at RunTask time) carry
         # all inbound rules: tcp/{challenge_port} from {user_vpn_ip}/32 only.
-        # No inbound rules are added here — deny-by-default for all lab tasks.
+        # No inbound rules are added here -- deny-by-default for all lab tasks.
         self.lab_security_group = ec2.SecurityGroup(
             self,
             "LabSecurityGroup",
             vpc=vpc,
             security_group_name=f"{prefix}-lab-runtime-sg",
-            description="Orchestryx ephemeral lab ECS tasks — egress baseline, no ingress",
+            description="Orchestryx ephemeral lab ECS tasks - egress baseline, no ingress",
             allow_all_outbound=True,
         )
         # public_ingress_enabled is intentionally not supported in the Phase 1
         # model. Lab access is VPN-only. Remove or ignore any old config key.
         lab_runtime_config = ecs_config.get("lab_runtime", {})
+        # Import the database SG by ID so that the ingress rules below are
+        # created as resources in THIS stack (EcsPlatformStack), not in
+        # DatabaseStack. Using the SG object directly would cause CDK to place
+        # CfnSecurityGroupIngress resources inside DatabaseStack, creating a
+        # circular dependency (DatabaseStack -> EcsPlatformStack exports).
+        database_security_group = ec2.SecurityGroup.from_security_group_id(
+            self,
+            "ImportedDatabaseSecurityGroup",
+            database_security_group_id,
+        )
         database_security_group.add_ingress_rule(
             self.api_security_group,
             ec2.Port.tcp(5432),

@@ -20,7 +20,7 @@ class VpnStack(cdk.Stack):
 
     The gateway does NOT MASQUERADE traffic destined for the VPC, so the
     source VPN IP is preserved end-to-end. Per-lab EC2 security groups rely
-    on this to enforce source_vpn_ip/32 → challenge_port rules.
+    on this to enforce source_vpn_ip/32 -> challenge_port rules.
     """
 
     def __init__(
@@ -63,7 +63,7 @@ class VpnStack(cdk.Stack):
                 ),
             )
 
-            # Add a route in every private subnet: 10.8.0.0/16 → WireGuard instance.
+            # Add a route in every private subnet: 10.8.0.0/16 -> WireGuard instance.
             # This allows lab ECS tasks (in private subnets) to respond to VPN clients
             # without each response leaving via the NAT gateway or being dropped.
             for i, subnet in enumerate(vpc.private_subnets):
