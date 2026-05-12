@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowLeft, ArrowRight, Clock3, Cpu, Database, Loader2, WalletCards } from "lucide-react";
+import { motion } from "framer-motion";
+import { ArrowLeft, ArrowRight, Clock3, Cpu, Database, Loader2, Network, ShieldCheck, WalletCards } from "lucide-react";
 import type { Route } from "next";
 import { StatusBadge } from "@/components/platform/status-badge";
 import { Badge } from "@/components/ui/badge";
@@ -145,17 +146,42 @@ export default function CatalogDetailPage() {
           Catalog
         </Link>
 
-        <div>
-          <h1 className="text-4xl text-foreground">{template.title}</h1>
-          <div className="mt-4 flex flex-wrap gap-2">
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="app-card signal-sweep overflow-hidden p-6"
+        >
+          <div className="mb-5 flex flex-wrap gap-2">
             <Badge>{template.category}</Badge>
             <Badge tone={getDifficultyTone(template.difficulty)}>{template.difficulty}</Badge>
+            <Badge tone="green">
+              <ShieldCheck className="mr-1 h-3 w-3" />
+              Private ECS lab
+            </Badge>
           </div>
-        </div>
+          <h1 className="text-4xl text-foreground">{template.title}</h1>
+          <p className="mt-4 max-w-2xl text-sm leading-7 text-muted-foreground">{template.description}</p>
+        </motion.div>
 
         <div className="app-card p-6">
-          <h2 className="text-xl text-foreground">Overview</h2>
-          <p className="mt-3 text-sm leading-7 text-muted-foreground">{template.description}</p>
+          <h2 className="text-xl text-foreground">Range architecture</h2>
+          <div className="mt-4 grid gap-3 sm:grid-cols-3">
+            <div className="rounded-lg border border-border bg-secondary/45 p-3">
+              <ShieldCheck className="h-4 w-4 text-success" />
+              <p className="mt-2 text-sm font-medium text-foreground">Isolated runtime</p>
+              <p className="mt-1 text-xs leading-5 text-muted-foreground">Dedicated lab resources are launched per session.</p>
+            </div>
+            <div className="rounded-lg border border-border bg-secondary/45 p-3">
+              <Network className="h-4 w-4 text-primary" />
+              <p className="mt-2 text-sm font-medium text-foreground">Private routing</p>
+              <p className="mt-1 text-xs leading-5 text-muted-foreground">Access is delivered through generated WireGuard config.</p>
+            </div>
+            <div className="rounded-lg border border-border bg-secondary/45 p-3">
+              <Clock3 className="h-4 w-4 text-warning" />
+              <p className="mt-2 text-sm font-medium text-foreground">Bounded lifetime</p>
+              <p className="mt-1 text-xs leading-5 text-muted-foreground">TTL and teardown controls keep environments contained.</p>
+            </div>
+          </div>
         </div>
 
         <div className="app-card p-6">
@@ -172,7 +198,7 @@ export default function CatalogDetailPage() {
 
       <aside className="lg:sticky lg:top-6 lg:self-start">
         <div className="app-card p-6">
-          <h2 className="text-xl text-foreground">Launch lab</h2>
+          <h2 className="text-xl text-foreground">Launch private lab</h2>
           <div className="mt-5 grid gap-3">
             <div className="flex items-center justify-between rounded-lg border border-border bg-secondary/50 p-3 text-sm">
               <span className="flex items-center gap-2 text-muted-foreground">
@@ -226,7 +252,7 @@ export default function CatalogDetailPage() {
                 )}
               >
                 {isActiveProvisioning ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRight className="h-4 w-4" />}
-                {activeStatus === "READY" ? "Open lab" : "View progress"}
+                {activeStatus === "READY" ? "View session" : "View progress"}
               </Link>
             </div>
           ) : (

@@ -282,7 +282,7 @@ export function ProtectedShell({ children }: { children: ReactNode }) {
   };
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
+    <div className="range-shell min-h-screen bg-background text-foreground">
       <aside
         className="fixed inset-y-0 left-0 z-40 hidden border-r border-sidebar-border lg:block"
         style={{ width: sidebarWidth }}
@@ -294,8 +294,8 @@ export function ProtectedShell({ children }: { children: ReactNode }) {
         />
       </aside>
 
-      <div className="transition-[padding] duration-200" style={{ paddingLeft: `${sidebarWidth}px` }}>
-        <header className="sticky top-0 z-30 flex h-14 items-center justify-between border-b border-border bg-background/80 px-4 backdrop-blur-md sm:px-6">
+      <div className={cn("transition-[padding] duration-200", collapsed ? "lg:pl-16" : "lg:pl-[252px]")}>
+        <header className="sticky top-0 z-30 flex h-14 items-center justify-between border-b border-border bg-background/82 px-4 backdrop-blur-xl sm:px-6">
           <div className="flex min-w-0 items-center gap-3">
             <button
               type="button"
@@ -327,7 +327,11 @@ export function ProtectedShell({ children }: { children: ReactNode }) {
             </Link>
           </div>
 
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-1.5">
+            <span className="hidden h-8 items-center gap-2 rounded-full border border-success/20 bg-success/8 px-3 text-[11px] font-medium text-success md:inline-flex">
+              <span className="h-1.5 w-1.5 rounded-full bg-success pulse-dot" />
+              Private range
+            </span>
             <Link
               href="/catalog"
               className="hidden h-8 items-center gap-1.5 rounded-lg bg-primary px-3 text-xs font-medium text-primary-foreground shadow-sm hover:bg-primary/90 sm:inline-flex"

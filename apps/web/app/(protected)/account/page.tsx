@@ -7,7 +7,6 @@ import {
   CalendarDays,
   Clock,
   CreditCard,
-  ExternalLink,
   Key,
   LogOut,
   Mail,
@@ -112,7 +111,6 @@ export default function AccountPage() {
         date: lab.started_at,
         label: `Lab ${lab.template_id}`,
         status: lab.status,
-        challengeUrl: lab.challenge_url,
       })),
     [labs]
   );
@@ -188,17 +186,6 @@ export default function AccountPage() {
                       </p>
                     </div>
                     <div className="flex items-center gap-3">
-                      {row.challengeUrl && (
-                        <a
-                          href={row.challengeUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="flex items-center gap-1 text-[12px] text-primary hover:text-primary/80"
-                        >
-                          <ExternalLink className="h-3 w-3" />
-                          Open
-                        </a>
-                      )}
                       <StatusBadge status={row.status} />
                     </div>
                   </div>

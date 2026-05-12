@@ -1,6 +1,7 @@
-import { ArrowRight, Clock3, Cpu, Database, Loader2 } from "lucide-react";
+import { ArrowRight, Clock3, Cpu, Database, Loader2, ShieldCheck } from "lucide-react";
 import Link from "next/link";
 import type { Route } from "next";
+import { motion } from "framer-motion";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { StatusBadge } from "@/components/platform/status-badge";
@@ -23,7 +24,14 @@ export function TemplateCard({
   const isProvisioning = Boolean(activeLab && isLabStatusTransitional(activeLab.status));
 
   return (
-    <article className="app-card-interactive flex h-full flex-col p-5">
+    <motion.article
+      layout
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      whileHover={{ y: -3 }}
+      transition={{ duration: 0.18, ease: "easeOut" }}
+      className="app-card-interactive signal-sweep flex h-full flex-col p-5"
+    >
       <div className="flex items-start justify-between gap-3">
         <Badge>{template.category}</Badge>
         <div className="flex flex-wrap justify-end gap-1.5">
@@ -57,6 +65,14 @@ export function TemplateCard({
         </span>
       </div>
 
+      <div className="mt-4 rounded-lg border border-border bg-secondary/35 p-3 text-xs text-muted-foreground">
+        <div className="flex items-center gap-2 font-medium text-foreground">
+          <ShieldCheck className="h-3.5 w-3.5 text-success" />
+          Isolated private launch
+        </div>
+        <p className="mt-1 leading-5">Access details are generated after provisioning and delivered as a WireGuard config.</p>
+      </div>
+
       {activeLab && hasLiveInstance ? (
         <Link
           href={`/labs/${activeLab.instance_id}` as Route}
@@ -66,7 +82,7 @@ export function TemplateCard({
           )}
         >
           {isProvisioning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ArrowRight className="h-3.5 w-3.5" />}
-          {activeStatus === "READY" ? "Open lab" : "View progress"}
+          {activeStatus === "READY" ? "View session" : "View progress"}
         </Link>
       ) : (
         <Button
@@ -79,6 +95,6 @@ export function TemplateCard({
           {!isStarting && <ArrowRight className="h-3.5 w-3.5" />}
         </Button>
       )}
-    </article>
+    </motion.article>
   );
 }

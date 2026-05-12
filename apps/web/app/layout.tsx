@@ -32,7 +32,7 @@ export default function RootLayout({
     <html
       lang="en"
       data-scroll-behavior="smooth"
-      data-accent="purple"
+      data-accent="blue"
       suppressHydrationWarning
       className={`${inter.variable} ${jetBrainsMono.variable} dark h-full antialiased`}
     >

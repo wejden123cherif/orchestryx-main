@@ -40,7 +40,7 @@ function getSystemDark(): boolean {
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [mode, setModeState] = useState<ThemeMode>(() => readStorage(STORAGE_KEY_MODE, "dark"));
-  const [accent, setAccentState] = useState<AccentColor>(() => readStorage(STORAGE_KEY_ACCENT, "purple"));
+  const [accent, setAccentState] = useState<AccentColor>(() => readStorage(STORAGE_KEY_ACCENT, "blue"));
   const [systemDark, setSystemDark] = useState(getSystemDark);
   const mounted = useRef(false);
 

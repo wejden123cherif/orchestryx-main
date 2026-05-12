@@ -3,7 +3,7 @@
 import Link from "next/link";
 import type { Route } from "next";
 import { useCallback, useEffect, useState } from "react";
-import { Download, ExternalLink, RefreshCw, Server, Square } from "lucide-react";
+import { Download, RefreshCw, Server, ShieldCheck, Square } from "lucide-react";
 import { motion } from "framer-motion";
 import { ConfirmActionDialog } from "@/components/platform/confirm-dialog";
 import { EmptyState } from "@/components/platform/empty-state";
@@ -194,20 +194,10 @@ export default function LabsPage() {
               </div>
               <span className="text-sm text-muted-foreground">{formatDateTime(lab.started_at)}</span>
               <div className="flex flex-wrap gap-2 lg:justify-end">
-                {lab.challenge_url ? (
-                  <a
-                    href={lab.challenge_url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className={cn(
-                      buttonVariants.secondary,
-                      "inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-lg px-3 text-xs font-medium"
-                    )}
-                  >
-                    <ExternalLink className="h-3.5 w-3.5" />
-                    Open
-                  </a>
-                ) : null}
+                <span className="inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-lg border border-success/20 bg-success/8 px-3 text-xs font-medium text-success">
+                  <ShieldCheck className="h-3.5 w-3.5" />
+                  Private
+                </span>
                 <Button
                   type="button"
                   size="sm"

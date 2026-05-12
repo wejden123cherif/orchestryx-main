@@ -10,7 +10,6 @@ import {
   Boxes,
   Clock3,
   Download,
-  ExternalLink,
   GitBranch,
   RefreshCw,
   Server,
@@ -67,16 +66,21 @@ function StatCard({
 }) {
   const t = toneClasses[tone];
   return (
-    <div className={cn("app-card p-5", t.ring)}>
+    <motion.div
+      layout
+      whileHover={{ y: -2 }}
+      transition={{ duration: 0.18, ease: "easeOut" }}
+      className={cn("app-card p-5", t.ring)}
+    >
       <div className="flex items-center justify-between">
         <p className="text-[13px] text-muted-foreground">{label}</p>
         <span className={cn("flex h-8 w-8 items-center justify-center rounded-lg", t.icon)}>
           <Icon className="h-4 w-4" />
         </span>
       </div>
-      <p className="mt-3 text-2xl font-semibold tracking-tight text-foreground">{value}</p>
+      <p className="metric-number mt-3 text-2xl font-semibold tracking-tight text-foreground">{value}</p>
       <p className="mt-1 text-xs text-muted-foreground">{hint}</p>
-    </div>
+    </motion.div>
   );
 }
 
@@ -279,7 +283,7 @@ export default function DashboardPage() {
               {labs.length ? (
                 <div className="overflow-x-auto">
                   <div className="min-w-[720px]">
-                    <div className="grid grid-cols-[1.4fr_0.7fr_0.7fr_0.6fr_1fr] gap-3 border-b border-border bg-muted/30 px-5 py-2.5 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+                    <div className="grid grid-cols-[1.4fr_0.7fr_0.7fr_0.6fr_0.85fr] gap-3 border-b border-border bg-muted/30 px-5 py-2.5 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
                       <span>Lab</span>
                       <span>Status</span>
                       <span>Time left</span>
@@ -297,7 +301,7 @@ export default function DashboardPage() {
                           layout
                           initial={{ opacity: 0, y: 4 }}
                           animate={{ opacity: 1, y: 0 }}
-                          className="grid grid-cols-[1.4fr_0.7fr_0.7fr_0.6fr_1fr] items-center gap-3 border-b border-border px-5 py-3.5 text-sm last:border-b-0 hover:bg-muted/20"
+                          className="grid grid-cols-[1.4fr_0.7fr_0.7fr_0.6fr_0.85fr] items-center gap-3 border-b border-border px-5 py-3.5 text-sm last:border-b-0 hover:bg-muted/20"
                         >
                           <Link href={`/labs/${lab.instance_id}` as Route} className="min-w-0">
                             <span className="block truncate text-[13px] font-medium text-foreground">{name}</span>
@@ -324,17 +328,6 @@ export default function DashboardPage() {
                             )}
                           </div>
                           <div className="flex flex-wrap justify-end gap-1.5">
-                            {lab.challenge_url ? (
-                              <a
-                                href={lab.challenge_url}
-                                target="_blank"
-                                rel="noreferrer"
-                                className={cn(buttonVariants.secondary, "inline-flex h-7 shrink-0 items-center gap-1 rounded-md px-2 text-[11px] font-medium")}
-                              >
-                                <ExternalLink className="h-3 w-3" />
-                                Open
-                              </a>
-                            ) : null}
                             <Button
                               type="button" size="sm" variant="secondary"
                               className="h-7 rounded-md px-2 text-[11px]"

@@ -10,7 +10,6 @@ import {
   CheckCircle2,
   Clock3,
   Download,
-  ExternalLink,
   FileText,
   Loader2,
   Network,
@@ -628,18 +627,12 @@ export default function LabDetailPage() {
                 accent={status === "READY"}
               />
               <InfoTile
-                label="Challenge endpoint"
+                label="Private endpoint"
                 value={
                   lab.challenge_url ? (
-                    <a
-                      href={lab.challenge_url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="mono flex min-w-0 items-center gap-1.5 truncate text-primary hover:text-primary/80"
-                    >
+                    <span className="mono flex min-w-0 items-center gap-1.5 truncate">
                       <span className="truncate">{lab.challenge_url}</span>
-                      <ExternalLink className="h-3.5 w-3.5 shrink-0" />
-                    </a>
+                    </span>
                   ) : (
                     "Available through private routing"
                   )
