@@ -700,14 +700,15 @@ async def get_lab_config(
 
     if normalize_lab_status(instance.status) != LAB_STATUS_READY:
         raise HTTPException(
-            status_code=400,
-            detail=f"Cannot download config for a lab with status {instance.status}",
+            status_code=409,
+            detail="Access config is available after the lab is running.",
         )
 
     # Phase 1+ path: return the pre-rendered config stored during provisioning.
     if instance.vpn_config_blob and instance.vpn_config_blob.strip():
         return PlainTextResponse(
             instance.vpn_config_blob,
+            media_type="text/plain",
             headers={
                 "Content-Disposition": (
                     f"attachment; filename={_vpn_config_filename(instance_id)}"
@@ -739,6 +740,7 @@ async def get_lab_config(
 
     return PlainTextResponse(
         rendered_config,
+        media_type="text/plain",
         headers={
             "Content-Disposition": (
                 f"attachment; filename={_vpn_config_filename(instance_id)}"
