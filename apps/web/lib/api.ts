@@ -61,6 +61,9 @@ api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
 
 export const extractApiErrorMessage = (error: unknown): string => {
   if (!axios.isAxiosError(error)) {
+    if (error instanceof Error && error.message.trim()) {
+      return error.message;
+    }
     return "Unexpected error. Please try again.";
   }
 
@@ -178,6 +181,56 @@ export async function getLabConfig(instanceId: string): Promise<Blob> {
     responseType: "blob",
   });
   return response.data;
+}
+
+function filenameFromContentDisposition(header: string | undefined): string | null {
+  if (!header) return null;
+
+  const utf8Match = header.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8Match?.[1]) {
+    return decodeURIComponent(utf8Match[1].replace(/^"|"$/g, ""));
+  }
+
+  const match = header.match(/filename="?([^";]+)"?/i);
+  return match?.[1] ?? null;
+}
+
+async function blobErrorMessage(error: unknown): Promise<string> {
+  if (!axios.isAxiosError(error) || !(error.response?.data instanceof Blob)) {
+    return extractApiErrorMessage(error);
+  }
+
+  const text = await error.response.data.text();
+  if (!text.trim()) {
+    return extractApiErrorMessage(error);
+  }
+
+  try {
+    const parsed = JSON.parse(text) as { detail?: unknown; message?: unknown };
+    if (typeof parsed.detail === "string" && parsed.detail.trim()) return parsed.detail;
+    if (typeof parsed.message === "string" && parsed.message.trim()) return parsed.message;
+  } catch {
+    // Plain text response body.
+  }
+
+  return text;
+}
+
+export async function getLabConfigDownload(instanceId: string): Promise<{ blob: Blob; filename: string }> {
+  try {
+    const response = await api.get<Blob>(`/labs/${instanceId}/config`, {
+      responseType: "blob",
+      headers: { Accept: "text/plain, application/octet-stream" },
+    });
+    return {
+      blob: response.data,
+      filename:
+        filenameFromContentDisposition(response.headers["content-disposition"]) ??
+        `orchestryx-${instanceId.replace(/[^a-zA-Z0-9]/g, "").slice(0, 8).toLowerCase() || "lab"}.conf`,
+    };
+  } catch (error) {
+    throw new Error(await blobErrorMessage(error));
+  }
 }
 
 export async function submitLabFlag(

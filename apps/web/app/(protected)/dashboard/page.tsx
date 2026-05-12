@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Route } from "next";
+import { motion } from "framer-motion";
 import {
   Activity,
   ArrowRight,
@@ -28,15 +29,17 @@ import {
   extractApiErrorMessage,
   getActiveLabs,
   getCatalog,
-  getLabConfig,
+  getLabConfigDownload,
   stopLab,
 } from "@/lib/api";
 import type { ActiveLab, LabTemplate, NormalizedLabStatus } from "@/lib/types";
 import {
   cn,
+  downloadBlob,
   getProvisioningStage,
   getTimeRemaining,
-  getVpnConfigFilename,
+  isLabStatusTerminal,
+  isLabStatusTransitional,
   normalizeLabStatus,
 } from "@/lib/utils";
 
@@ -109,13 +112,18 @@ export default function DashboardPage() {
   const { toast } = useToast();
   const [labs, setLabs] = useState<ActiveLab[]>([]);
   const [templates, setTemplates] = useState<LabTemplate[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isInitialLoading, setIsInitialLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [actionId, setActionId] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [confirmStopId, setConfirmStopId] = useState<string | null>(null);
 
-  const loadDashboard = useCallback(async () => {
-    setIsLoading(true);
+  const loadDashboard = useCallback(async ({ silent = false }: { silent?: boolean } = {}) => {
+    if (silent) {
+      setIsRefreshing(true);
+    } else {
+      setIsInitialLoading(true);
+    }
     setErrorMessage(null);
     try {
       const [activeLabs, catalog] = await Promise.all([getActiveLabs(), getCatalog()]);
@@ -124,11 +132,26 @@ export default function DashboardPage() {
     } catch (error) {
       setErrorMessage(extractApiErrorMessage(error));
     } finally {
-      setIsLoading(false);
+      setIsInitialLoading(false);
+      setIsRefreshing(false);
     }
   }, []);
 
-  useEffect(() => { void Promise.resolve().then(loadDashboard); }, [loadDashboard]);
+  useEffect(() => { void Promise.resolve().then(() => loadDashboard()); }, [loadDashboard]);
+
+  useEffect(() => {
+    if (!labs.length) return;
+
+    const hasTransitionalLab = labs.some((lab) => isLabStatusTransitional(lab.status));
+    const hasLiveLab = labs.some((lab) => !isLabStatusTerminal(lab.status));
+    if (!hasLiveLab) return;
+
+    const timeoutId = window.setTimeout(() => {
+      void loadDashboard({ silent: true });
+    }, hasTransitionalLab ? 5000 : 15000);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [labs, loadDashboard]);
 
   const templateById = useMemo(() => new Map(templates.map((t) => [t.id, t])), [templates]);
   const counts = useMemo(() => statusCounts(labs), [labs]);
@@ -145,14 +168,9 @@ export default function DashboardPage() {
   const downloadConfig = async (instanceId: string) => {
     setActionId(instanceId);
     try {
-      const config = await getLabConfig(instanceId);
-      const url = URL.createObjectURL(new Blob([config], { type: "text/plain;charset=utf-8" }));
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = getVpnConfigFilename(instanceId);
-      anchor.click();
-      URL.revokeObjectURL(url);
-      toast({ title: "VPN config downloaded", tone: "success" });
+      const { blob, filename } = await getLabConfigDownload(instanceId);
+      downloadBlob(new Blob([blob], { type: blob.type || "text/plain;charset=utf-8" }), filename);
+      toast({ title: "Access config downloaded", tone: "success" });
     } catch (error) {
       toast({ title: "Config unavailable", description: extractApiErrorMessage(error), tone: "error" });
     } finally {
@@ -165,7 +183,7 @@ export default function DashboardPage() {
     try {
       await stopLab(instanceId);
       toast({ title: "Destroy requested", tone: "success" });
-      await loadDashboard();
+      await loadDashboard({ silent: true });
     } catch (error) {
       toast({ title: "Destroy failed", description: extractApiErrorMessage(error), tone: "error" });
     } finally {
@@ -183,8 +201,8 @@ export default function DashboardPage() {
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button type="button" variant="secondary" size="sm" onClick={loadDashboard} disabled={isLoading}>
-            <RefreshCw className={cn("h-3.5 w-3.5", isLoading && "animate-spin")} />
+          <Button type="button" variant="secondary" size="sm" onClick={() => loadDashboard({ silent: true })} disabled={isRefreshing}>
+            <RefreshCw className={cn("h-3.5 w-3.5", isRefreshing && "animate-spin")} />
             Refresh
           </Button>
           <Link
@@ -210,7 +228,7 @@ export default function DashboardPage() {
         </div>
       ) : null}
 
-      {isLoading ? (
+      {isInitialLoading && !labs.length ? (
         <DashboardSkeleton />
       ) : (
         <>
@@ -274,8 +292,11 @@ export default function DashboardPage() {
                       const normalized = normalizeLabStatus(lab.status);
 
                       return (
-                        <div
+                        <motion.div
                           key={lab.instance_id}
+                          layout
+                          initial={{ opacity: 0, y: 4 }}
+                          animate={{ opacity: 1, y: 0 }}
                           className="grid grid-cols-[1.4fr_0.7fr_0.7fr_0.6fr_1fr] items-center gap-3 border-b border-border px-5 py-3.5 text-sm last:border-b-0 hover:bg-muted/20"
                         >
                           <Link href={`/labs/${lab.instance_id}` as Route} className="min-w-0">
@@ -318,6 +339,7 @@ export default function DashboardPage() {
                               type="button" size="sm" variant="secondary"
                               className="h-7 rounded-md px-2 text-[11px]"
                               disabled={actionId === lab.instance_id || normalized !== "READY"}
+                              title={normalized === "READY" ? "Download WireGuard access config" : "Config available after lab is running"}
                               onClick={() => downloadConfig(lab.instance_id)}
                             >
                               <Download className="h-3 w-3" />
@@ -333,7 +355,7 @@ export default function DashboardPage() {
                               Stop
                             </Button>
                           </div>
-                        </div>
+                        </motion.div>
                       );
                     })}
                   </div>

@@ -249,8 +249,6 @@ function DataTable<T>({
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
 
-  useEffect(() => setPage(1), [search]);
-
   const filtered = useMemo(() => {
     if (!search || !searchFn) return data;
     const q = search.toLowerCase();
@@ -270,7 +268,10 @@ function DataTable<T>({
             <Input
               placeholder={searchPlaceholder}
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onChange={(e) => {
+                setSearch(e.target.value);
+                setPage(1);
+              }}
               className="pl-9"
             />
           </div>

@@ -20,11 +20,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/components/ui/toast";
-import { extractApiErrorMessage, getCatalog, startLab } from "@/lib/api";
+import { extractApiErrorMessage, getActiveLabs, getCatalog, startLab } from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
 import { seedCatalog } from "@/lib/seed-catalog";
-import type { CatalogFilter, LabTemplate } from "@/lib/types";
-import { cn } from "@/lib/utils";
+import type { ActiveLab, CatalogFilter, LabTemplate } from "@/lib/types";
+import { cn, isLabStatusTerminal } from "@/lib/utils";
 
 const filters: { label: CatalogFilter; icon: typeof Boxes }[] = [
   { label: "All", icon: Boxes },
@@ -60,6 +60,7 @@ export default function CatalogPage() {
   const { toast } = useToast();
   const { isAuthReady, tokens } = useAuth();
   const [apiTemplates, setApiTemplates] = useState<LabTemplate[]>([]);
+  const [activeLabs, setActiveLabs] = useState<ActiveLab[]>([]);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<CatalogFilter>("All");
   const [isLoading, setIsLoading] = useState(false);
@@ -73,10 +74,24 @@ export default function CatalogPage() {
     setErrorMessage(null);
 
     try {
-      const data = await getCatalog();
-      if (data.length > 0) setApiTemplates(data);
-    } catch {
-      // API unreachable — seed catalog is used as fallback
+      const [catalogResult, activeResult] = await Promise.allSettled([
+        getCatalog(),
+        getActiveLabs(),
+      ]);
+
+      if (catalogResult.status === "fulfilled" && catalogResult.value.length > 0) {
+        setApiTemplates(catalogResult.value);
+      }
+
+      if (activeResult.status === "fulfilled") {
+        setActiveLabs(activeResult.value);
+      }
+
+      if (catalogResult.status === "rejected") {
+        setErrorMessage(extractApiErrorMessage(catalogResult.reason));
+      }
+    } catch (error) {
+      setErrorMessage(extractApiErrorMessage(error));
     } finally {
       setIsLoading(false);
     }
@@ -88,6 +103,16 @@ export default function CatalogPage() {
   }, [isAuthReady, loadCatalog, tokens?.access_token]);
 
   const templates = apiTemplates.length > 0 ? apiTemplates : seedCatalog;
+
+  const activeLabByTemplateId = useMemo(() => {
+    const map = new Map<string, ActiveLab>();
+    for (const lab of activeLabs) {
+      if (!isLabStatusTerminal(lab.status) && !map.has(lab.template_id)) {
+        map.set(lab.template_id, lab);
+      }
+    }
+    return map;
+  }, [activeLabs]);
 
   const filteredTemplates = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -110,6 +135,8 @@ export default function CatalogPage() {
   }, [templates]);
 
   const handleStart = async (templateId: string) => {
+    if (startingId) return;
+
     setStartingId(templateId);
     try {
       const result = await startLab(templateId);
@@ -201,6 +228,7 @@ export default function CatalogPage() {
               template={template}
               onStart={handleStart}
               isStarting={startingId === template.id}
+              activeLab={activeLabByTemplateId.get(template.id)}
             />
           ))}
         </section>

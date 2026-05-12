@@ -1,6 +1,6 @@
 "use client";
 
-import { Flag, ShieldAlert } from "lucide-react";
+import { ShieldAlert } from "lucide-react";
 import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
 import { Badge } from "@/components/ui/badge";
 import type { MachineNodeData } from "@/lib/types";
@@ -30,7 +30,6 @@ export function MachineNode({ data, selected }: NodeProps<MachineFlowNode>) {
           </div>
           <p className="mono mt-1 text-xs text-muted-foreground">{data.ip}</p>
         </div>
-        {data.isFlag ? <Flag className="h-4 w-4 text-warning" /> : null}
       </div>
 
       <div className="mt-3 flex flex-wrap gap-1.5">

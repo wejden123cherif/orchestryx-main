@@ -3,7 +3,8 @@
 import Link from "next/link";
 import type { Route } from "next";
 import { useCallback, useEffect, useState } from "react";
-import { Download, ExternalLink, Server, Square } from "lucide-react";
+import { Download, ExternalLink, RefreshCw, Server, Square } from "lucide-react";
+import { motion } from "framer-motion";
 import { ConfirmActionDialog } from "@/components/platform/confirm-dialog";
 import { EmptyState } from "@/components/platform/empty-state";
 import { StatusBadge } from "@/components/platform/status-badge";
@@ -13,17 +14,19 @@ import { useToast } from "@/components/ui/toast";
 import {
   extractApiErrorMessage,
   getActiveLabs,
-  getLabConfig,
+  getLabConfigDownload,
   stopLab,
 } from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
 import type { ActiveLab } from "@/lib/types";
 import {
   cn,
+  downloadBlob,
   formatDateTime,
   getProvisioningStage,
   getTimeRemaining,
-  getVpnConfigFilename,
+  isLabStatusTerminal,
+  isLabStatusTransitional,
   normalizeLabStatus,
 } from "@/lib/utils";
 
@@ -44,17 +47,22 @@ export default function LabsPage() {
   const { toast } = useToast();
   const { isAuthReady, tokens } = useAuth();
   const [labs, setLabs] = useState<ActiveLab[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isInitialLoading, setIsInitialLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [actionId, setActionId] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [confirmStopId, setConfirmStopId] = useState<string | null>(null);
 
-  const loadLabs = useCallback(async () => {
+  const loadLabs = useCallback(async ({ silent = false }: { silent?: boolean } = {}) => {
     if (!isAuthReady || !tokens?.access_token) {
       return;
     }
 
-    setIsLoading(true);
+    if (silent) {
+      setIsRefreshing(true);
+    } else {
+      setIsInitialLoading(true);
+    }
     setErrorMessage(null);
 
     try {
@@ -63,7 +71,8 @@ export default function LabsPage() {
       console.error("Failed to load active labs", error);
       setErrorMessage(extractApiErrorMessage(error));
     } finally {
-      setIsLoading(false);
+      setIsInitialLoading(false);
+      setIsRefreshing(false);
     }
   }, [isAuthReady, tokens?.access_token]);
 
@@ -72,23 +81,34 @@ export default function LabsPage() {
       return;
     }
 
-    void Promise.resolve().then(loadLabs);
+    void Promise.resolve().then(() => loadLabs());
   }, [isAuthReady, loadLabs, tokens?.access_token]);
+
+  useEffect(() => {
+    if (!isAuthReady || !tokens?.access_token || !labs.length) {
+      return;
+    }
+
+    const hasTransitionalLab = labs.some((lab) => isLabStatusTransitional(lab.status));
+    const hasLiveLab = labs.some((lab) => !isLabStatusTerminal(lab.status));
+    if (!hasLiveLab) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      void loadLabs({ silent: true });
+    }, hasTransitionalLab ? 4000 : 15000);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [isAuthReady, labs, loadLabs, tokens?.access_token]);
 
   const downloadConfig = async (instanceId: string) => {
     setActionId(instanceId);
 
     try {
-      const configBlob = await getLabConfig(instanceId);
-      const url = window.URL.createObjectURL(new Blob([configBlob]));
-      const link = document.createElement("a");
-      link.href = url;
-      link.setAttribute("download", getVpnConfigFilename(instanceId));
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      window.URL.revokeObjectURL(url);
-      toast({ title: "VPN config downloaded", tone: "success" });
+      const { blob, filename } = await getLabConfigDownload(instanceId);
+      downloadBlob(new Blob([blob], { type: blob.type || "text/plain;charset=utf-8" }), filename);
+      toast({ title: "Access config downloaded", tone: "success" });
     } catch (error) {
       console.error("Failed to download active lab config", error);
       toast({
@@ -107,7 +127,7 @@ export default function LabsPage() {
     try {
       await stopLab(instanceId);
       toast({ title: "Destroy requested", tone: "success" });
-      await loadLabs();
+      await loadLabs({ silent: true });
     } catch (error) {
       console.error("Failed to stop active lab", error);
       toast({
@@ -115,7 +135,7 @@ export default function LabsPage() {
         description: extractApiErrorMessage(error),
         tone: "error",
       });
-      await loadLabs();
+      await loadLabs({ silent: true });
     } finally {
       setActionId(null);
     }
@@ -130,7 +150,8 @@ export default function LabsPage() {
             Active environments, access config, and lifecycle controls.
           </p>
         </div>
-        <Button type="button" variant="secondary" size="sm" onClick={loadLabs} disabled={isLoading}>
+        <Button type="button" variant="secondary" size="sm" onClick={() => loadLabs({ silent: true })} disabled={isRefreshing}>
+          <RefreshCw className={cn("h-3.5 w-3.5", isRefreshing && "animate-spin")} />
           Refresh
         </Button>
       </header>
@@ -141,13 +162,16 @@ export default function LabsPage() {
         </div>
       ) : null}
 
-      {!isAuthReady || !tokens?.access_token || isLoading ? (
+      {!isAuthReady || !tokens?.access_token || (isInitialLoading && !labs.length) ? (
         <LabsSkeleton />
       ) : labs.length ? (
         <section className="app-card overflow-hidden">
           {labs.map((lab, index) => (
-            <div
+            <motion.div
               key={lab.instance_id}
+              layout
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
               className={cn(
                 "grid gap-4 border-b border-border p-4 last:border-b-0 lg:grid-cols-[1.4fr_0.7fr_0.7fr_0.9fr_auto] lg:items-center",
                 index % 2 === 1 && "bg-secondary/35"
@@ -189,6 +213,7 @@ export default function LabsPage() {
                   size="sm"
                   variant="secondary"
                   disabled={actionId === lab.instance_id || normalizeLabStatus(lab.status) !== "READY"}
+                  title={normalizeLabStatus(lab.status) === "READY" ? "Download WireGuard access config" : "Config available after lab is running"}
                   onClick={() => downloadConfig(lab.instance_id)}
                 >
                   <Download className="h-3.5 w-3.5" />
@@ -208,7 +233,7 @@ export default function LabsPage() {
                   Stop
                 </Button>
               </div>
-            </div>
+            </motion.div>
           ))}
         </section>
       ) : (

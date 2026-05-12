@@ -24,7 +24,6 @@ import { motion } from "framer-motion";
 import {
   Download,
   Eraser,
-  Flag,
   Rocket,
   Save,
   ShieldAlert,
@@ -811,29 +810,6 @@ function MachineConfigPanel({
             </Button>
           </div>
         </div>
-        <label className="flex items-center justify-between gap-3 rounded-lg border border-border bg-secondary/45 p-3 text-sm">
-          <span className="flex items-center gap-2 text-foreground">
-            <Flag className="h-4 w-4 text-warning" />
-            Flag target
-          </span>
-          <input
-            type="checkbox"
-            checked={node.data.isFlag}
-            onChange={(event) => onChange((data) => ({ ...data, isFlag: event.target.checked }))}
-            className="h-4 w-4 accent-primary"
-          />
-        </label>
-        {node.data.isFlag ? (
-          <div className="space-y-2">
-            <Label htmlFor="flag-value">Custom flag value</Label>
-            <Input
-              id="flag-value"
-              value={node.data.flagValue}
-              onChange={(event) => onChange((data) => ({ ...data, flagValue: event.target.value }))}
-              placeholder="ORX{...}"
-            />
-          </div>
-        ) : null}
       </div>
     </motion.aside>
   );

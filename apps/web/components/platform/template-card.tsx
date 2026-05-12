@@ -1,27 +1,35 @@
-import { ArrowRight, Clock3, Cpu, Database } from "lucide-react";
+import { ArrowRight, Clock3, Cpu, Database, Loader2 } from "lucide-react";
 import Link from "next/link";
 import type { Route } from "next";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import type { LabTemplate } from "@/lib/types";
-import { getDifficultyTone } from "@/lib/utils";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { StatusBadge } from "@/components/platform/status-badge";
+import type { ActiveLab, LabTemplate } from "@/lib/types";
+import { cn, getDifficultyTone, isLabStatusTerminal, isLabStatusTransitional, normalizeLabStatus } from "@/lib/utils";
 
 export function TemplateCard({
   template,
   onStart,
   isStarting,
+  activeLab,
 }: {
   template: LabTemplate;
   onStart: (templateId: string) => void;
   isStarting?: boolean;
+  activeLab?: ActiveLab;
 }) {
+  const activeStatus = activeLab ? normalizeLabStatus(activeLab.status) : null;
+  const hasLiveInstance = Boolean(activeLab && !isLabStatusTerminal(activeLab.status));
+  const isProvisioning = Boolean(activeLab && isLabStatusTransitional(activeLab.status));
+
   return (
     <article className="app-card-interactive flex h-full flex-col p-5">
       <div className="flex items-start justify-between gap-3">
         <Badge>{template.category}</Badge>
-        <Badge tone={getDifficultyTone(template.difficulty)}>
-          {template.difficulty}
-        </Badge>
+        <div className="flex flex-wrap justify-end gap-1.5">
+          {activeLab && hasLiveInstance ? <StatusBadge status={activeLab.status} /> : null}
+          <Badge tone={getDifficultyTone(template.difficulty)}>{template.difficulty}</Badge>
+        </div>
       </div>
 
       <Link href={`/catalog/${template.id}` as Route}>
@@ -49,15 +57,28 @@ export function TemplateCard({
         </span>
       </div>
 
-      <Button
-        type="button"
-        className="mt-4 w-full gap-2"
-        disabled={isStarting}
-        onClick={() => onStart(template.id)}
-      >
-        {isStarting ? "Starting..." : "Launch"}
-        {!isStarting && <ArrowRight className="h-3.5 w-3.5" />}
-      </Button>
+      {activeLab && hasLiveInstance ? (
+        <Link
+          href={`/labs/${activeLab.instance_id}` as Route}
+          className={cn(
+            activeStatus === "READY" ? buttonVariants.primary : buttonVariants.secondary,
+            "mt-4 inline-flex h-10 w-full items-center justify-center gap-2 rounded-xl px-4 text-sm font-medium"
+          )}
+        >
+          {isProvisioning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ArrowRight className="h-3.5 w-3.5" />}
+          {activeStatus === "READY" ? "Open lab" : "View progress"}
+        </Link>
+      ) : (
+        <Button
+          type="button"
+          className="mt-4 w-full gap-2"
+          disabled={isStarting}
+          onClick={() => onStart(template.id)}
+        >
+          {isStarting ? "Starting..." : "Launch"}
+          {!isStarting && <ArrowRight className="h-3.5 w-3.5" />}
+        </Button>
+      )}
     </article>
   );
 }

@@ -75,7 +75,26 @@ export function getProvisioningStage(status: string, progress: number): string {
   return "Failed";
 }
 
+export function isLabStatusTransitional(status: string): boolean {
+  return ["QUEUED", "PROVISIONING", "STARTING", "DESTROYING"].includes(normalizeLabStatus(status));
+}
+
+export function isLabStatusTerminal(status: string): boolean {
+  return ["FAILED", "STOPPED", "EXPIRED"].includes(normalizeLabStatus(status));
+}
+
 export function getVpnConfigFilename(instanceId: string): string {
   const shortId = instanceId.replace(/[^a-zA-Z0-9]/g, "").slice(0, 8) || "lab";
-  return `ox-${shortId.toLowerCase()}.conf`;
+  return `orchestryx-${shortId.toLowerCase()}.conf`;
+}
+
+export function downloadBlob(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
 }

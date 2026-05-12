@@ -3,15 +3,17 @@
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowLeft, Clock3, Cpu, Database, WalletCards } from "lucide-react";
+import { ArrowLeft, ArrowRight, Clock3, Cpu, Database, Loader2, WalletCards } from "lucide-react";
+import type { Route } from "next";
+import { StatusBadge } from "@/components/platform/status-badge";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/components/ui/toast";
 import { useAuth } from "@/hooks/useAuth";
-import { extractApiErrorMessage, getTemplate, startLab } from "@/lib/api";
-import type { LabTemplate } from "@/lib/types";
-import { getDifficultyTone } from "@/lib/utils";
+import { extractApiErrorMessage, getActiveLabs, getTemplate, startLab } from "@/lib/api";
+import type { ActiveLab, LabTemplate } from "@/lib/types";
+import { cn, getDifficultyTone, isLabStatusTerminal, isLabStatusTransitional, normalizeLabStatus } from "@/lib/utils";
 
 function practiceItems(template: LabTemplate): string[] {
   const category = template.category.toLowerCase();
@@ -41,6 +43,7 @@ export default function CatalogDetailPage() {
   const { user, isAuthReady, tokens } = useAuth();
   const { toast } = useToast();
   const [template, setTemplate] = useState<LabTemplate | null>(null);
+  const [activeLab, setActiveLab] = useState<ActiveLab | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isStarting, setIsStarting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -54,7 +57,9 @@ export default function CatalogDetailPage() {
     setErrorMessage(null);
 
     try {
-      setTemplate(await getTemplate(params.id));
+      const [nextTemplate, activeLabs] = await Promise.all([getTemplate(params.id), getActiveLabs()]);
+      setTemplate(nextTemplate);
+      setActiveLab(activeLabs.find((lab) => lab.template_id === params.id && !isLabStatusTerminal(lab.status)) ?? null);
     } catch (error) {
       console.error("Failed to load template details", error);
       setErrorMessage(extractApiErrorMessage(error));
@@ -74,11 +79,14 @@ export default function CatalogDetailPage() {
   const insufficientCredits = Boolean(
     template && (user?.credits_balance ?? 0) < template.credits_cost
   );
+  const activeStatus = activeLab ? normalizeLabStatus(activeLab.status) : null;
+  const isActiveProvisioning = activeLab ? isLabStatusTransitional(activeLab.status) : false;
 
   const items = useMemo(() => (template ? practiceItems(template) : []), [template]);
 
   const handleStart = async () => {
     if (!template) return;
+    if (isStarting) return;
 
     setIsStarting(true);
     try {
@@ -202,15 +210,36 @@ export default function CatalogDetailPage() {
             </p>
           ) : null}
 
-          <Button
-            type="button"
-            size="lg"
-            className="mt-5 w-full"
-            disabled={insufficientCredits || isStarting}
-            onClick={handleStart}
-          >
-            {isStarting ? "Starting..." : "Start Lab"}
-          </Button>
+          {activeLab ? (
+            <div className="mt-5 rounded-lg border border-primary/20 bg-primary/8 p-3">
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-sm font-medium text-foreground">
+                  {activeStatus === "READY" ? "Lab is ready" : "Lab is provisioning"}
+                </p>
+                <StatusBadge status={activeLab.status} />
+              </div>
+              <Link
+                href={`/labs/${activeLab.instance_id}` as Route}
+                className={cn(
+                  activeStatus === "READY" ? buttonVariants.primary : buttonVariants.secondary,
+                  "mt-3 inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl px-5 text-sm font-medium"
+                )}
+              >
+                {isActiveProvisioning ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRight className="h-4 w-4" />}
+                {activeStatus === "READY" ? "Open lab" : "View progress"}
+              </Link>
+            </div>
+          ) : (
+            <Button
+              type="button"
+              size="lg"
+              className="mt-5 w-full"
+              disabled={insufficientCredits || isStarting}
+              onClick={handleStart}
+            >
+              {isStarting ? "Starting..." : "Start Lab"}
+            </Button>
+          )}
         </div>
       </aside>
     </div>
