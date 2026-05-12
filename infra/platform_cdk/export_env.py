@@ -43,6 +43,11 @@ OUTPUT_MAP = {
     "DnsStack": {
         "PrivateHostedZoneId": "ORCHESTRYX_PRIVATE_ZONE_ID",
     },
+    "VpnStack": {
+        "WireGuardInstanceId": "ORCHESTRYX_WIREGUARD_INSTANCE_ID",
+        "WireGuardSecurityGroupId": "ORCHESTRYX_WIREGUARD_SECURITY_GROUP_ID",
+        "WireGuardPrivateDnsName": "ORCHESTRYX_WIREGUARD_PRIVATE_DNS_NAME",
+    },
 }
 
 

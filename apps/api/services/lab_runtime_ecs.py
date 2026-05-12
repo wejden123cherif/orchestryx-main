@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -24,6 +26,8 @@ from apps.api.config import (
     LAB_ECS_SUBNET_IDS,
     LAB_ECS_TASK_EXECUTION_ROLE_ARN,
     LAB_ECS_TASK_ROLE_ARN,
+    ORCHESTRYX_ENV,
+    ORCHESTRYX_WIREGUARD_INSTANCE_ID,
 )
 from apps.api.models.lab_instance import LabInstance
 from apps.api.models.lab_template import LabTemplate
@@ -69,8 +73,14 @@ def _required_runtime_settings() -> None:
         missing.append("LAB_ECS_SECURITY_GROUP_IDS")
     if not LAB_ECS_TASK_EXECUTION_ROLE_ARN:
         missing.append("LAB_ECS_TASK_EXECUTION_ROLE_ARN")
-    if not AWS_VPC_ID:
+    if not _current_vpc_id():
         missing.append("AWS_VPC_ID")
+    if not ORCHESTRYX_WIREGUARD_INSTANCE_ID:
+        missing.append("ORCHESTRYX_WIREGUARD_INSTANCE_ID")
+    if LAB_ECS_ASSIGN_PUBLIC_IP:
+        raise LabRuntimeConfigError(
+            "LAB_ECS_ASSIGN_PUBLIC_IP must be false; lab tasks must stay private"
+        )
     if missing:
         raise LabRuntimeConfigError(
             "Missing required ECS lab runtime settings: " + ", ".join(missing)
@@ -87,6 +97,23 @@ def _ec2_client():
 
 def _logs_client():
     return boto3.client("logs", region_name=AWS_REGION)
+
+
+def _current_vpc_id() -> str:
+    return (
+        AWS_VPC_ID
+        or os.getenv("AWS_VPC_ID", "").strip()
+        or os.getenv("ORCHESTRYX_VPC_ID", "").strip()
+    )
+
+
+def _aws_error_detail(exc: BaseException) -> str:
+    if isinstance(exc, ClientError):
+        error = exc.response.get("Error", {})
+        code = error.get("Code", "ClientError")
+        message = error.get("Message", str(exc))
+        return f"{code}: {message}"
+    return f"{exc.__class__.__name__}: {exc}"
 
 
 def _family_name(template_id: str) -> str:
@@ -110,14 +137,24 @@ def ensure_lab_log_group() -> None:
     except ClientError as exc:
         code = exc.response.get("Error", {}).get("Code")
         if code != "ResourceAlreadyExistsException":
-            raise LabRuntimeAwsError("Could not create lab CloudWatch log group") from exc
+            raise LabRuntimeAwsError(
+                f"Could not create lab CloudWatch log group: {_aws_error_detail(exc)}"
+            ) from exc
     except BotoCoreError as exc:
-        raise LabRuntimeAwsError("Could not create lab CloudWatch log group") from exc
+        raise LabRuntimeAwsError(
+            f"Could not create lab CloudWatch log group: {_aws_error_detail(exc)}"
+        ) from exc
 
 
 def register_lab_task_definition(template: LabTemplate) -> tuple[str, str]:
     _required_runtime_settings()
     ensure_lab_log_group()
+    if not (template.docker_image_uri and template.docker_image_uri.strip()):
+        raise LabRuntimeConfigError(f"Lab template {template.id} has no docker_image_uri")
+    if int(template.challenge_port) < 1 or int(template.challenge_port) > 65535:
+        raise LabRuntimeConfigError(
+            f"Lab template {template.id} has invalid challenge_port {template.challenge_port}"
+        )
     container_name = _container_name(template.id)
     task_definition: dict[str, Any] = {
         "family": _family_name(template.id),
@@ -159,7 +196,9 @@ def register_lab_task_definition(template: LabTemplate) -> tuple[str, str]:
     try:
         response = _ecs_client().register_task_definition(**task_definition)
     except (BotoCoreError, ClientError) as exc:
-        raise LabRuntimeAwsError("Could not register lab task definition") from exc
+        raise LabRuntimeAwsError(
+            f"Could not register lab task definition: {_aws_error_detail(exc)}"
+        ) from exc
 
     return response["taskDefinition"]["taskDefinitionArn"], container_name
 
@@ -203,7 +242,6 @@ def run_lab_task(
                             {"name": "ORCHESTRYX_INSTANCE_ID", "value": instance.id},
                             {"name": "ORCHESTRYX_TEMPLATE_ID", "value": template.id},
                             {"name": "ORCHESTRYX_USER_ID", "value": instance.user_id},
-                            {"name": "ORCHESTRYX_FLAG", "value": f"ORCHESTRYX{{{instance.id}}}"},
                         ],
                     }
                 ]
@@ -211,13 +249,17 @@ def run_lab_task(
             tags=[
                 {"key": "Project", "value": "Orchestryx"},
                 {"key": "Runtime", "value": "lab"},
+                {"key": "Environment", "value": ORCHESTRYX_ENV},
+                {"key": "OrchestryxManaged", "value": "true"},
                 {"key": "LabInstanceId", "value": instance.id},
                 {"key": "LabTemplateId", "value": template.id},
                 {"key": "UserId", "value": instance.user_id},
             ],
         )
     except (BotoCoreError, ClientError) as exc:
-        raise LabRuntimeAwsError("Could not start ECS lab task") from exc
+        raise LabRuntimeAwsError(
+            f"Could not start ECS lab task: {_aws_error_detail(exc)}"
+        ) from exc
 
     failures = response.get("failures", [])
     if failures:
@@ -234,7 +276,9 @@ def describe_task(task_arn: str) -> EcsTaskSnapshot | None:
     try:
         response = _ecs_client().describe_tasks(cluster=LAB_ECS_CLUSTER, tasks=[task_arn])
     except (BotoCoreError, ClientError) as exc:
-        raise LabRuntimeAwsError("Could not describe ECS lab task") from exc
+        raise LabRuntimeAwsError(
+            f"Could not describe ECS lab task: {_aws_error_detail(exc)}"
+        ) from exc
 
     tasks = response.get("tasks", [])
     if not tasks:
@@ -283,9 +327,13 @@ def describe_network_interface(
     except ClientError as exc:
         if exc.response.get("Error", {}).get("Code") == "InvalidNetworkInterfaceID.NotFound":
             return fallback_private_ip, None
-        raise LabRuntimeAwsError("Could not describe lab task network interface") from exc
+        raise LabRuntimeAwsError(
+            f"Could not describe lab task network interface: {_aws_error_detail(exc)}"
+        ) from exc
     except BotoCoreError as exc:
-        raise LabRuntimeAwsError("Could not describe lab task network interface") from exc
+        raise LabRuntimeAwsError(
+            f"Could not describe lab task network interface: {_aws_error_detail(exc)}"
+        ) from exc
 
     interfaces = response.get("NetworkInterfaces", [])
     if not interfaces:
@@ -300,7 +348,7 @@ def stop_lab_task(task_arn: str, reason: str) -> EcsTaskSnapshot | None:
     try:
         _ecs_client().stop_task(cluster=LAB_ECS_CLUSTER, task=task_arn, reason=reason)
     except (BotoCoreError, ClientError) as exc:
-        raise LabRuntimeAwsError("Could not stop ECS lab task") from exc
+        raise LabRuntimeAwsError(f"Could not stop ECS lab task: {_aws_error_detail(exc)}") from exc
     return describe_task(task_arn)
 
 
@@ -339,7 +387,8 @@ def create_per_lab_security_group(
     Returns the new security group ID. Raises LabRuntimeAwsError on failure.
     The caller must store the ID and call delete_per_lab_security_group on destroy.
     """
-    if not AWS_VPC_ID:
+    vpc_id = _current_vpc_id()
+    if not vpc_id:
         raise LabRuntimeConfigError("AWS_VPC_ID is required for per-lab security group creation")
 
     sg_name = f"orchestryx-lab-{instance_id[:8]}"
@@ -347,12 +396,13 @@ def create_per_lab_security_group(
         response = _ec2_client().create_security_group(
             GroupName=sg_name,
             Description=f"Per-lab isolation: {instance_id}",
-            VpcId=AWS_VPC_ID,
+            VpcId=vpc_id,
             TagSpecifications=[
                 {
                     "ResourceType": "security-group",
                     "Tags": [
                         {"Key": "Project", "Value": "Orchestryx"},
+                        {"Key": "OrchestryxManaged", "Value": "true"},
                         {"Key": "LabInstanceId", "Value": instance_id},
                         {"Key": "ManagedBy", "Value": "orchestryx-worker"},
                     ],
@@ -360,7 +410,9 @@ def create_per_lab_security_group(
             ],
         )
     except (BotoCoreError, ClientError) as exc:
-        raise LabRuntimeAwsError("Could not create per-lab security group") from exc
+        raise LabRuntimeAwsError(
+            f"Could not create per-lab security group: {_aws_error_detail(exc)}"
+        ) from exc
 
     sg_id = response["GroupId"]
 
@@ -384,7 +436,10 @@ def create_per_lab_security_group(
     except (BotoCoreError, ClientError) as exc:
         # Best-effort cleanup before propagating.
         _try_delete_security_group(sg_id)
-        raise LabRuntimeAwsError("Could not configure per-lab security group ingress rule") from exc
+        raise LabRuntimeAwsError(
+            "Could not configure per-lab security group ingress rule: "
+            f"{_aws_error_detail(exc)}"
+        ) from exc
 
     logger.info(
         "Created per-lab SG %s: tcp/%d from %s/32 (instance %s)",
@@ -411,17 +466,25 @@ def delete_per_lab_security_group(sg_id: str) -> None:
     """
     if not sg_id:
         return
-    try:
-        _ec2_client().delete_security_group(GroupId=sg_id)
-        logger.info("Deleted per-lab security group %s", sg_id)
-    except ClientError as exc:
-        code = exc.response.get("Error", {}).get("Code", "")
-        if code == "InvalidGroup.NotFound":
-            logger.info("Per-lab SG %s already absent; skipping delete", sg_id)
-        else:
+    ec2 = _ec2_client()
+    for attempt in range(1, 7):
+        try:
+            ec2.delete_security_group(GroupId=sg_id)
+            logger.info("Deleted per-lab security group %s", sg_id)
+            return
+        except ClientError as exc:
+            code = exc.response.get("Error", {}).get("Code", "")
+            if code == "InvalidGroup.NotFound":
+                logger.info("Per-lab SG %s already absent; skipping delete", sg_id)
+                return
+            if code == "DependencyViolation" and attempt < 6:
+                time.sleep(5)
+                continue
             logger.warning("Could not delete per-lab SG %s: %s", sg_id, exc)
-    except BotoCoreError as exc:
-        logger.warning("Could not delete per-lab SG %s: %s", sg_id, exc)
+            return
+        except BotoCoreError as exc:
+            logger.warning("Could not delete per-lab SG %s: %s", sg_id, exc)
+            return
 
 
 def fetch_lab_logs(
@@ -445,9 +508,9 @@ def fetch_lab_logs(
         code = exc.response.get("Error", {}).get("Code")
         if code in {"ResourceNotFoundException", "InvalidParameterException"}:
             return {"events": [], "next_forward_token": None}
-        raise LabRuntimeAwsError("Could not fetch lab logs") from exc
+        raise LabRuntimeAwsError(f"Could not fetch lab logs: {_aws_error_detail(exc)}") from exc
     except BotoCoreError as exc:
-        raise LabRuntimeAwsError("Could not fetch lab logs") from exc
+        raise LabRuntimeAwsError(f"Could not fetch lab logs: {_aws_error_detail(exc)}") from exc
 
     return {
         "events": [

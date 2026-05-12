@@ -51,6 +51,7 @@ class VpnStack(cdk.Stack):
             vpc_cidr=vpc_cidr,
         )
         self.gateway_security_group = gateway.security_group
+        self.gateway_instance_id = gateway.instance.instance_id if gateway.instance is not None else ""
 
         if gateway.instance is not None:
             route53.ARecord(
@@ -89,7 +90,7 @@ class VpnStack(cdk.Stack):
             cdk.CfnOutput(
                 self,
                 "WireGuardInstanceId",
-                value=gateway.instance.instance_id,
+                value=self.gateway_instance_id,
                 description="Instance ID of the WireGuard gateway for SSM scoping",
             )
 

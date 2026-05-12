@@ -25,7 +25,7 @@ from botocore.exceptions import BotoCoreError, ClientError
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 
-from apps.api.config import AWS_REGION
+from apps.api.config import AWS_REGION, ORCHESTRYX_WIREGUARD_INSTANCE_ID
 
 logger = logging.getLogger(__name__)
 
@@ -68,9 +68,13 @@ def _secrets_client():
 def get_gateway_instance_id() -> str:
     """Return the instance ID of the running WireGuard gateway EC2 instance.
 
-    Discovers by tag Name matching *WireGuardGateway/Instance*.
+    Prefer ORCHESTRYX_WIREGUARD_INSTANCE_ID from CDK outputs/runtime env.
+    Falls back to discovery by tag Name matching *WireGuardGateway/Instance*.
     Raises VpnGatewayError if no running instance is found.
     """
+    if ORCHESTRYX_WIREGUARD_INSTANCE_ID:
+        return ORCHESTRYX_WIREGUARD_INSTANCE_ID
+
     try:
         response = _ec2_client().describe_instances(
             Filters=[
@@ -106,34 +110,68 @@ def _run_ssm_command(
     Raises VpnGatewayError on command failure, AWS error, or timeout.
     This replaces the original fire-and-forget send_command pattern.
     """
+    ssm = _ssm_client()
     try:
-        response = _ssm_client().send_command(
+        response = ssm.send_command(
             InstanceIds=[gateway_instance_id],
             DocumentName="AWS-RunShellScript",
             Parameters={"commands": [command]},
         )
     except (BotoCoreError, ClientError) as exc:
+        code = ""
+        message = str(exc)
+        if isinstance(exc, ClientError):
+            error = exc.response.get("Error", {})
+            code = error.get("Code", "")
+            message = error.get("Message", message)
         raise VpnGatewayError(
-            f"Could not dispatch SSM command to gateway {gateway_instance_id}"
+            "Could not dispatch SSM command to gateway "
+            f"{gateway_instance_id}: {code or exc.__class__.__name__}: {message}"
         ) from exc
 
     command_id = response["Command"]["CommandId"]
+    logger.info(
+        "Dispatched SSM command %s to WireGuard gateway %s",
+        command_id,
+        gateway_instance_id,
+    )
     deadline = time.monotonic() + timeout_seconds
 
     while time.monotonic() < deadline:
         time.sleep(_SSM_POLL_INTERVAL_SECONDS)
         try:
-            inv = _ssm_client().get_command_invocation(
+            inv = ssm.get_command_invocation(
                 CommandId=command_id,
                 InstanceId=gateway_instance_id,
             )
-        except (BotoCoreError, ClientError) as exc:
+        except ClientError as exc:
+            error = exc.response.get("Error", {})
+            code = error.get("Code", "")
+            message = error.get("Message", str(exc))
+            if code == "InvocationDoesNotExist":
+                logger.info(
+                    "SSM command %s invocation is not visible yet for gateway %s",
+                    command_id,
+                    gateway_instance_id,
+                )
+                continue
             raise VpnGatewayError(
-                f"Could not poll SSM command invocation {command_id}"
+                "Could not poll SSM command invocation "
+                f"{command_id}: {code or 'ClientError'}: {message}"
+            ) from exc
+        except BotoCoreError as exc:
+            raise VpnGatewayError(
+                "Could not poll SSM command invocation "
+                f"{command_id}: {exc.__class__.__name__}: {exc}"
             ) from exc
 
         status = inv.get("Status", "")
         if status == "Success":
+            logger.info(
+                "SSM command %s succeeded on WireGuard gateway %s",
+                command_id,
+                gateway_instance_id,
+            )
             return
         if status in (
             "Failed",
@@ -143,9 +181,11 @@ def _run_ssm_command(
             "DeliveryTimedOut",
         ):
             stderr = (inv.get("StandardErrorContent") or "").strip()
+            stdout = (inv.get("StandardOutputContent") or "").strip()
             raise VpnGatewayError(
                 f"SSM command on {gateway_instance_id} failed "
-                f"(status={status}): {stderr or '(no stderr)'}"
+                f"(command_id={command_id}, status={status}): "
+                f"stderr={stderr or '(empty)'} stdout={stdout or '(empty)'}"
             )
         # InProgress / Pending / Delayed — keep polling
 

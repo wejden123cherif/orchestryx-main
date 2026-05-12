@@ -45,6 +45,9 @@ def _int(name: str, default: int) -> int:
         raise ConfigError(f"Invalid integer environment variable: {name}") from exc
 
 
+ORCHESTRYX_ENV = _optional("ORCHESTRYX_ENV", "local")
+
+
 # ── Database ─────────────────────────────────────────────────────────────────
 DATABASE_URL = _required("DATABASE_URL")
 SQL_ECHO = _bool("SQL_ECHO", default=False)
@@ -101,6 +104,8 @@ LAB_ECS_CPU = _int("LAB_ECS_CPU", 512)
 LAB_ECS_MEMORY_MIB = _int("LAB_ECS_MEMORY_MIB", 1024)
 LAB_VPN_CONFIG_SECRET_ID = _optional("LAB_VPN_CONFIG_SECRET_ID", "")
 LAB_VPN_CONFIG_INLINE = _optional("LAB_VPN_CONFIG_INLINE", "")
+ORCHESTRYX_WIREGUARD_INSTANCE_ID = _optional("ORCHESTRYX_WIREGUARD_INSTANCE_ID", "")
+ORCHESTRYX_WIREGUARD_SECURITY_GROUP_ID = _optional("ORCHESTRYX_WIREGUARD_SECURITY_GROUP_ID", "")
 
 # ── AWS monitoring defaults ───────────────────────────────────────────────────
 # These mirror the status CLI defaults but can be overridden per environment
@@ -114,4 +119,7 @@ AWS_API_LOG_GROUP = _optional("AWS_API_LOG_GROUP", "/ecs/orchestryx-api")
 AWS_WORKER_LOG_GROUP = _optional("AWS_WORKER_LOG_GROUP", "/ecs/orchestryx-worker")
 AWS_ECR_API_REPOSITORY = _optional("AWS_ECR_API_REPOSITORY", "orchestryx-api")
 AWS_ECR_WORKER_REPOSITORY = _optional("AWS_ECR_WORKER_REPOSITORY", "orchestryx-worker")
-AWS_VPC_ID = _optional("AWS_VPC_ID", "")
+# In ECS tasks AWS_VPC_ID is injected directly by the CDK shared_environment.
+# For local dev, fall back to ORCHESTRYX_VPC_ID which export_env.py writes to
+# .env.dev.generated so developers who source that file don't need to rename it.
+AWS_VPC_ID = _optional("AWS_VPC_ID", _optional("ORCHESTRYX_VPC_ID", ""))

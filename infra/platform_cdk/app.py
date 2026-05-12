@@ -140,6 +140,7 @@ ecs_platform = EcsPlatformStack(
     lab_log_group=observability.lab_log_group,
     database_endpoint=database.database_endpoint,
     vpn_security_group=vpn.gateway_security_group,
+    vpn_instance_id=vpn.gateway_instance_id,
     env=stack_env,
 )
 

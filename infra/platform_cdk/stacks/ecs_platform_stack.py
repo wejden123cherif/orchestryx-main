@@ -53,6 +53,7 @@ class EcsPlatformStack(cdk.Stack):
         lab_log_group: logs.ILogGroup,
         database_endpoint: str,
         vpn_security_group: ec2.ISecurityGroup | None = None,
+        vpn_instance_id: str = "",
         **kwargs,
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
@@ -191,8 +192,14 @@ class EcsPlatformStack(cdk.Stack):
                     "ecs:DescribeTaskDefinition",
                     "ec2:DescribeNetworkInterfaces",
                     "ec2:DescribeInstances",
+                    "ec2:DescribeSecurityGroups",
+                    "ec2:DescribeSubnets",
+                    "ec2:DescribeVpcs",
                     "ec2:CreateSecurityGroup",
                     "ec2:AuthorizeSecurityGroupIngress",
+                    "ec2:AuthorizeSecurityGroupEgress",
+                    "ec2:RevokeSecurityGroupIngress",
+                    "ec2:RevokeSecurityGroupEgress",
                     "ec2:DeleteSecurityGroup",
                     "ec2:CreateTags",
                     "logs:CreateLogGroup",
@@ -202,22 +209,37 @@ class EcsPlatformStack(cdk.Stack):
                 resources=["*"],
             )
         )
-        # SSM permissions scoped to the WireGuard gateway tag to prevent the
-        # worker from sending arbitrary commands to other EC2 instances.
+        # SendCommand authorizes both the SSM document and the target instance.
+        # Keep the document permission separate; otherwise an instance tag
+        # condition can deny AWS-RunShellScript before dispatch reaches EC2.
         worker_task_role.add_to_policy(
             iam.PolicyStatement(
                 actions=["ssm:SendCommand"],
-                resources=["*"],
+                resources=[
+                    cdk.Fn.sub(
+                        "arn:${AWS::Partition}:ssm:${AWS::Region}::document/AWS-RunShellScript"
+                    )
+                ],
+            )
+        )
+        worker_task_role.add_to_policy(
+            iam.PolicyStatement(
+                actions=["ssm:SendCommand"],
+                resources=[
+                    cdk.Fn.sub(
+                        "arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/*"
+                    )
+                ],
                 conditions={
                     "StringLike": {
-                        "ssm:resourceTag/Name": "*WireGuardGateway*",
+                        "ssm:resourceTag/Name": "*WireGuardGateway/Instance*",
                     }
                 },
             )
         )
         worker_task_role.add_to_policy(
             iam.PolicyStatement(
-                actions=["ssm:GetCommandInvocation"],
+                actions=["ssm:GetCommandInvocation", "ssm:ListCommandInvocations"],
                 resources=["*"],
             )
         )
@@ -249,7 +271,9 @@ class EcsPlatformStack(cdk.Stack):
 
         shared_environment = {
             "PYTHONUNBUFFERED": "1",
+            "ORCHESTRYX_ENV": env_name,
             "AWS_REGION": cdk.Stack.of(self).region,
+            "AWS_VPC_ID": vpc.vpc_id,
             "COGNITO_USER_POOL_ID": user_pool.user_pool_id,
             "COGNITO_APP_CLIENT_ID": user_pool_client.user_pool_client_id,
             "PROVISION_QUEUE": provision_queue.queue_name,
@@ -272,7 +296,12 @@ class EcsPlatformStack(cdk.Stack):
             "LAB_ECS_MEMORY_MIB": str(
                 int(lab_runtime_config.get("memory_mib", ecs_config.get("memory_mib", 1024)))
             ),
+            "ORCHESTRYX_WIREGUARD_INSTANCE_ID": vpn_instance_id,
         }
+        if vpn_security_group is not None:
+            shared_environment["ORCHESTRYX_WIREGUARD_SECURITY_GROUP_ID"] = (
+                vpn_security_group.security_group_id
+            )
 
         self.api_service = OrchestryxFargateService(
             self,

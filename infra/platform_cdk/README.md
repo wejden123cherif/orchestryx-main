@@ -370,6 +370,56 @@ The generated file includes deployment wiring for the app deploy scripts:
 - `ORCHESTRYX_WORKER_ECR_REPO_URI`
 - `ORCHESTRYX_DATABASE_ENDPOINT`
 - `ORCHESTRYX_DATABASE_SECRET_ARN`
+- `ORCHESTRYX_PRIVATE_ZONE_ID`
+- `ORCHESTRYX_WIREGUARD_INSTANCE_ID`
+- `ORCHESTRYX_WIREGUARD_SECURITY_GROUP_ID`
+- `ORCHESTRYX_WIREGUARD_PRIVATE_DNS_NAME`
+
+## Lab Runtime Validation
+
+Lab provisioning is private ECS Fargate plus WireGuard. The worker receives the
+canonical runtime environment from `EcsPlatformStack`: `AWS_VPC_ID`,
+`LAB_ECS_CLUSTER`, private `LAB_ECS_SUBNET_IDS`, `LAB_ECS_SECURITY_GROUP_IDS`,
+lab task roles, lab log group, `LAB_ECS_ASSIGN_PUBLIC_IP=false`, and
+`ORCHESTRYX_WIREGUARD_INSTANCE_ID`.
+
+After changing VPN/ECS runtime wiring:
+
+```bash
+cd infra/platform_cdk
+cdk synth -c env=dev
+cdk diff OrchestryxDev-VpnStack -c env=dev
+cdk diff OrchestryxDev-EcsPlatformStack -c env=dev
+cdk deploy OrchestryxDev-VpnStack OrchestryxDev-EcsPlatformStack -c env=dev --outputs-file cdk-outputs-dev.json
+python export_env.py --env dev --outputs-file cdk-outputs-dev.json
+```
+
+Gateway SSM smoke test:
+
+```bash
+aws ssm describe-instance-information --region "$AWS_REGION" \
+  --filters Key=InstanceIds,Values="$ORCHESTRYX_WIREGUARD_INSTANCE_ID"
+
+CMD_ID=$(aws ssm send-command --region "$AWS_REGION" \
+  --instance-ids "$ORCHESTRYX_WIREGUARD_INSTANCE_ID" \
+  --document-name AWS-RunShellScript \
+  --parameters commands='["systemctl is-active amazon-ssm-agent && wg show wg0"]' \
+  --query 'Command.CommandId' --output text)
+
+aws ssm get-command-invocation --region "$AWS_REGION" \
+  --command-id "$CMD_ID" \
+  --instance-id "$ORCHESTRYX_WIREGUARD_INSTANCE_ID"
+```
+
+Worker/ECS/lab cleanup checks:
+
+```bash
+aws logs tail /ecs/orchestryx-dev-worker --since 30m --region "$AWS_REGION"
+aws ecs list-tasks --cluster "$ORCHESTRYX_ECS_CLUSTER_NAME" --region "$AWS_REGION"
+aws ecs describe-tasks --cluster "$ORCHESTRYX_ECS_CLUSTER_NAME" --tasks "<task-arn>" --region "$AWS_REGION"
+aws ec2 describe-security-groups --region "$AWS_REGION" \
+  --filters Name=tag:OrchestryxManaged,Values=true Name=tag:ManagedBy,Values=orchestryx-worker
+```
 
 ## App Deployment Boundary
 
@@ -440,7 +490,8 @@ Enabled in dev, opt-in elsewhere:
 - Aurora PostgreSQL creation.
 - API and worker Fargate services.
 
-Skeleton or disabled:
+Active in dev:
 
-- WireGuard EC2 gateway instance is disabled by default.
-- Public API ALB, Route 53 public DNS, and lab-runtime Fargate are intentionally not implemented yet.
+- WireGuard EC2 gateway, including SSM-managed instance role and private subnet routes for VPN client CIDR.
+- Private ECS Fargate lab runtime support for common container labs.
+- Public API ALB for the backend API only; lab tasks are not attached to the ALB and do not receive public IPs.

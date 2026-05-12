@@ -64,6 +64,7 @@ from apps.api.services.vpn_gateway import (
     generate_vpn_peer_config,
     get_gateway_instance_id,
     register_vpn_peer,
+    revoke_vpn_peer,
     render_vpn_config,
 )
 from workers.celery_app import PROVISION_QUEUE, celery_app
@@ -134,6 +135,8 @@ def provision_lab(instance_id: str, template_id: str, user_id: str) -> None:
     # Tracks resources created mid-flight so _mark_failed can clean them up.
     per_lab_sg_id: str | None = None
     peer_config: VpnPeerConfig | None = None
+    gateway_instance_id: str | None = None
+    peer_added = False
 
     try:
         # ------------------------------------------------------------------ #
@@ -148,6 +151,13 @@ def provision_lab(instance_id: str, template_id: str, user_id: str) -> None:
                     instance_id,
                     bool(instance),
                     bool(template),
+                )
+                return
+            if instance.status not in {"QUEUED", "PROVISIONING", "STARTING"}:
+                logger.info(
+                    "Skipping lab provisioning for %s because status is %s",
+                    instance_id,
+                    instance.status,
                 )
                 return
 
@@ -169,6 +179,7 @@ def provision_lab(instance_id: str, template_id: str, user_id: str) -> None:
             # Capture values we need outside the session scope.
             challenge_port: int = template.challenge_port
             template_expires_at = instance.expires_at
+            image_uri = template.docker_image_uri
 
             set_lab_status(
                 session,
@@ -185,6 +196,13 @@ def provision_lab(instance_id: str, template_id: str, user_id: str) -> None:
         # ------------------------------------------------------------------ #
         peer_config = generate_vpn_peer_config(instance_id)
         gateway_instance_id = get_gateway_instance_id()
+        logger.info(
+            "Provisioning lab %s template=%s image=%s gateway=%s",
+            instance_id,
+            template_id,
+            image_uri,
+            gateway_instance_id,
+        )
 
         # ------------------------------------------------------------------ #
         # Phase 3: Create per-lab security group                              #
@@ -214,6 +232,7 @@ def provision_lab(instance_id: str, template_id: str, user_id: str) -> None:
         # Phase 4: Register VPN peer (SSM, waited on — fails hard)            #
         # ------------------------------------------------------------------ #
         register_vpn_peer(gateway_instance_id, peer_config)
+        peer_added = True
 
         with SessionLocal() as session:
             instance = session.get(LabInstance, instance_id)
@@ -248,6 +267,13 @@ def provision_lab(instance_id: str, template_id: str, user_id: str) -> None:
                 per_lab_security_group_id=per_lab_sg_id,
             )
             instance.ecs_task_arn = task_arn
+            logger.info(
+                "Started ECS lab task %s for lab %s template=%s sg=%s",
+                task_arn,
+                instance_id,
+                template_id,
+                per_lab_sg_id,
+            )
             session.commit()
 
         # ------------------------------------------------------------------ #
@@ -361,6 +387,8 @@ def provision_lab(instance_id: str, template_id: str, user_id: str) -> None:
 
     except (LabRuntimeConfigError, LabRuntimeAwsError, VpnGatewayError) as exc:
         logger.exception("ECS lab provisioning failed for %s", instance_id)
+        if peer_added and peer_config is not None and gateway_instance_id:
+            revoke_vpn_peer(gateway_instance_id, peer_config.public_key)
         try:
             _mark_failed(
                 instance_id=instance_id,

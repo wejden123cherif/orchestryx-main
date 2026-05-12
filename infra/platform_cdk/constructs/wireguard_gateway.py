@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import aws_cdk as cdk
 from aws_cdk import aws_ec2 as ec2
 from aws_cdk import aws_iam as iam
 from aws_cdk import aws_secretsmanager as secretsmanager
@@ -119,7 +120,12 @@ class WireGuardGateway(Construct):
                 "PersistentKeepalive = 25",
                 "EOF",
                 "TEMPLATE=$(cat /tmp/template.txt)",
-                f"aws secretsmanager put-secret-value --secret-id {self.secret.secret_arn} --secret-string \"$TEMPLATE\" --region eu-central-1",
+                (
+                    "aws secretsmanager put-secret-value "
+                    f"--secret-id {self.secret.secret_arn} "
+                    "--secret-string \"$TEMPLATE\" "
+                    f"--region {cdk.Stack.of(self).region}"
+                ),
             )
 
             self.instance = ec2.Instance(

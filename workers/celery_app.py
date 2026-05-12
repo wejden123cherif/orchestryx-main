@@ -3,12 +3,14 @@ from apps.api.config import (
     AWS_REGION,
     DESTROY_QUEUE,
     LAB_CLEANUP_STUCK_AFTER_SECONDS,
+    LAB_PROVISION_TIMEOUT_SECONDS,
     PROVISION_QUEUE,
     SQS_DESTROY_URL,
     SQS_PROVISION_URL,
 )
 
 celery_app = Celery("orchestryx")
+SQS_VISIBILITY_TIMEOUT_SECONDS = max(1800, LAB_PROVISION_TIMEOUT_SECONDS + 300)
 
 celery_app.conf.update(
     broker_url=f"sqs://",
@@ -19,15 +21,19 @@ celery_app.conf.update(
         "predefined_queues": {
             PROVISION_QUEUE: {
                 "url": SQS_PROVISION_URL,
-                "visibility_timeout": 600,
+                "visibility_timeout": SQS_VISIBILITY_TIMEOUT_SECONDS,
             },
             DESTROY_QUEUE: {
                 "url": SQS_DESTROY_URL,
-                "visibility_timeout": 600,
+                "visibility_timeout": SQS_VISIBILITY_TIMEOUT_SECONDS,
             },
         },
     },
     task_default_queue=PROVISION_QUEUE,
+    task_acks_late=True,
+    task_acks_on_failure_or_timeout=True,
+    task_reject_on_worker_lost=True,
+    worker_prefetch_multiplier=1,
     task_serializer="json",
     accept_content=["json"],
     result_serializer="json",
