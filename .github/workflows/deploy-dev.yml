@@ -93,4 +93,4 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Deploy with existing script
-        run: ./scripts/linux/deploy.sh "${{ inputs.target }}"
+        run: bash scripts/linux/deploy.sh "${{ inputs.target }}"

@@ -46,7 +46,7 @@ CI does not deploy infrastructure, push images, mutate AWS resources, run live d
 The workflow uses GitHub Actions OIDC through `aws-actions/configure-aws-credentials`. It then calls the existing deployment script instead of re-implementing deployment logic in YAML:
 
 ```bash
-./scripts/linux/deploy.sh "$target"
+bash scripts/linux/deploy.sh "$target"
 ```
 
 The script supports these targets:
