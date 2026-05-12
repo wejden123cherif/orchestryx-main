@@ -25,7 +25,6 @@ import { ConfirmActionDialog } from "@/components/platform/confirm-dialog";
 import { StatusBadge } from "@/components/platform/status-badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useToast } from "@/components/ui/toast";
 import {
   extractApiErrorMessage,
   getLabConfigDownload,
@@ -49,25 +48,48 @@ import {
 type LifecycleStep = {
   key: string;
   label: string;
-  hint: string;
   icon: typeof Clock3;
 };
 
+type ActivityNotice = {
+  id: string;
+  title: string;
+  message: string;
+  tone: "info" | "success" | "error";
+  createdAt: Date;
+};
+
 const lifecycleSteps: LifecycleStep[] = [
-  { key: "queued", label: "Preparing lab", hint: "Worker queued the launch request.", icon: Clock3 },
-  { key: "starting", label: "Starting container", hint: "Private ECS task and networking are being created.", icon: Loader2 },
-  { key: "access", label: "Configuring private access", hint: "WireGuard routing and access config are prepared.", icon: Network },
-  { key: "ready", label: "Ready", hint: "Connect with WireGuard and use the private endpoint.", icon: CheckCircle2 },
+  { key: "queued", label: "Preparing", icon: Clock3 },
+  { key: "starting", label: "Container", icon: Loader2 },
+  { key: "access", label: "Access", icon: Network },
+  { key: "ready", label: "Ready", icon: CheckCircle2 },
 ];
 
 function LabDetailSkeleton() {
   return (
-    <div className="space-y-5">
-      <Skeleton className="h-5 w-40" />
-      <Skeleton className="h-24 w-full" />
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_24rem]">
-        <Skeleton className="h-96 w-full" />
-        <Skeleton className="h-96 w-full" />
+    <div className="space-y-6">
+      <Skeleton className="h-5 w-36" />
+      <div className="app-card overflow-hidden p-6">
+        <div className="flex items-center gap-4">
+          <div className="relative h-12 w-12 overflow-hidden rounded-xl border border-border bg-secondary">
+            <span className="absolute inset-x-2 top-2 h-1 rounded-full bg-primary/30" />
+            <span className="absolute inset-x-2 top-5 h-1 rounded-full bg-primary/45" />
+            <span className="absolute inset-x-2 top-8 h-1 rounded-full bg-primary/20" />
+            <span className="absolute inset-0 lab-scan" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <Skeleton className="h-6 w-64 max-w-full" />
+            <Skeleton className="mt-3 h-4 w-96 max-w-full" />
+          </div>
+        </div>
+        <div className="relative mt-6 h-1 overflow-hidden rounded-full bg-secondary">
+          <span className="progress-indeterminate" />
+        </div>
+      </div>
+      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_22rem]">
+        <Skeleton className="h-72 w-full" />
+        <Skeleton className="h-72 w-full" />
       </div>
     </div>
   );
@@ -89,23 +111,23 @@ function LifecyclePanel({ lab }: { lab: LabStatusResponse }) {
   const progress = Math.max(0, Math.min(100, lab.progress ?? 0));
 
   return (
-    <section className="app-card p-5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
+    <section className="app-card overflow-hidden">
+      <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-4">
         <div>
-          <h2 className="text-sm font-semibold text-foreground">Launch lifecycle</h2>
+          <h2 className="text-sm font-semibold text-foreground">Launch</h2>
           <p className="mt-1 text-xs text-muted-foreground">
-            {getProvisioningStage(lab.status, progress)} - {progress}% complete
+            {getProvisioningStage(lab.status, progress)} · {progress}%
           </p>
         </div>
         {isLabStatusTransitional(lab.status) ? (
-          <span className="inline-flex items-center gap-2 rounded-full border border-primary/20 bg-primary/8 px-3 py-1 text-xs font-medium text-primary">
+          <span className="inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-xs font-medium text-primary">
             <span className="h-2 w-2 rounded-full bg-primary animate-pulse" />
             Live
           </span>
         ) : null}
       </div>
 
-      <div className="mt-5 h-2 overflow-hidden rounded-full bg-secondary">
+      <div className="h-1 overflow-hidden bg-secondary">
         <motion.div
           className={cn("h-full rounded-full", status === "FAILED" ? "bg-destructive" : "bg-primary")}
           initial={false}
@@ -114,7 +136,7 @@ function LifecyclePanel({ lab }: { lab: LabStatusResponse }) {
         />
       </div>
 
-      <div className="mt-5 grid gap-3 md:grid-cols-4">
+      <div className="grid grid-cols-4 px-4 py-4">
         {lifecycleSteps.map((step, index) => {
           const state = stepState(status, index, progress);
           const Icon = step.icon;
@@ -122,35 +144,39 @@ function LifecyclePanel({ lab }: { lab: LabStatusResponse }) {
             <motion.div
               key={step.key}
               layout
-              className={cn(
-                "rounded-lg border p-3 transition",
-                state === "done" && "border-success/20 bg-success/8",
-                state === "active" && "border-primary/25 bg-primary/8 shadow-sm shadow-primary/5",
-                state === "failed" && "border-destructive/25 bg-destructive/8",
-                state === "pending" && "border-border bg-secondary/40"
-              )}
+              className="relative flex flex-col items-center gap-2 px-1 text-center"
             >
-              <div className="flex items-center gap-2">
-                <span
-                  className={cn(
-                    "flex h-7 w-7 shrink-0 items-center justify-center rounded-lg",
-                    state === "done" && "bg-success/10 text-success",
-                    state === "active" && "bg-primary/10 text-primary",
-                    state === "failed" && "bg-destructive/10 text-destructive",
-                    state === "pending" && "bg-muted text-muted-foreground"
-                  )}
-                >
-                  {state === "done" ? (
-                    <CheckCircle2 className="h-3.5 w-3.5" />
-                  ) : state === "failed" ? (
-                    <XCircle className="h-3.5 w-3.5" />
-                  ) : (
-                    <Icon className={cn("h-3.5 w-3.5", state === "active" && "animate-pulse")} />
-                  )}
-                </span>
-                <p className="text-xs font-medium text-foreground">{step.label}</p>
-              </div>
-              <p className="mt-2 text-[11px] leading-5 text-muted-foreground">{step.hint}</p>
+              {index < lifecycleSteps.length - 1 ? (
+                <span className="absolute left-1/2 top-4 h-px w-full bg-border" />
+              ) : null}
+              <motion.span
+                initial={false}
+                animate={state === "active" ? { scale: [1, 1.08, 1] } : { scale: 1 }}
+                transition={state === "active" ? { repeat: Infinity, duration: 1.4, ease: "easeInOut" } : undefined}
+                className={cn(
+                  "relative z-10 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border bg-card",
+                  state === "done" && "border-success/35 text-success",
+                  state === "active" && "border-primary/45 text-primary shadow-[0_0_0_6px_color-mix(in_srgb,var(--primary)_10%,transparent)]",
+                  state === "failed" && "border-destructive/35 text-destructive",
+                  state === "pending" && "border-border text-muted-foreground"
+                )}
+              >
+                {state === "done" ? (
+                  <CheckCircle2 className="h-4 w-4" />
+                ) : state === "failed" ? (
+                  <XCircle className="h-4 w-4" />
+                ) : (
+                  <Icon className={cn("h-4 w-4", state === "active" && "animate-spin")} />
+                )}
+              </motion.span>
+              <p
+                className={cn(
+                  "relative z-10 max-w-full truncate text-[11px] font-medium",
+                  state === "pending" ? "text-muted-foreground" : "text-foreground"
+                )}
+              >
+                {step.label}
+              </p>
             </motion.div>
           );
         })}
@@ -183,39 +209,74 @@ function eventTone(event: LabEvent): string {
   return "border-border bg-secondary/45";
 }
 
+function noticeTone(notice: ActivityNotice): string {
+  if (notice.tone === "error") return "border-destructive/25 bg-destructive/8";
+  if (notice.tone === "success") return "border-success/25 bg-success/8";
+  return "border-border bg-secondary/45";
+}
+
+function formatClock(value: Date | null): string {
+  if (!value) return "Not synced";
+  return new Intl.DateTimeFormat(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).format(value);
+}
+
 function ActivityPanel({
   events,
   lab,
   isRefreshing,
+  notices,
+  lastSyncedAt,
 }: {
   events: LabEvent[];
   lab: LabStatusResponse;
   isRefreshing: boolean;
+  notices: ActivityNotice[];
+  lastSyncedAt: Date | null;
 }) {
   const visibleEvents = events.slice(-8).reverse();
   const status = normalizeLabStatus(lab.status);
+  const latestEvent = visibleEvents[0];
 
   return (
-    <aside className="app-card overflow-hidden">
-      <div className="flex items-center justify-between border-b border-border px-5 py-4">
+    <aside className="app-card overflow-hidden lg:sticky lg:top-6 lg:self-start">
+      <div className="flex items-center justify-between border-b border-border px-4 py-3">
         <div className="flex items-center gap-3">
-          <span className="flex h-9 w-9 items-center justify-center rounded-lg border border-border bg-secondary text-primary">
+          <span className="flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-secondary text-primary">
             <Activity className="h-4 w-4" />
           </span>
           <div>
             <h2 className="text-sm font-semibold text-foreground">Lab Activity</h2>
-            <p className="mt-0.5 text-xs text-muted-foreground">
-              {status === "READY" ? "Ready for private access" : lab.status_message || getProvisioningStage(lab.status, lab.progress)}
-            </p>
+            <p className="mt-0.5 text-xs text-muted-foreground">Synced {formatClock(lastSyncedAt)}</p>
           </div>
         </div>
-        <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+        <span className="inline-flex items-center gap-1.5 rounded-full bg-secondary px-2 py-1 text-[11px] text-muted-foreground">
           <span className={cn("h-2 w-2 rounded-full", isRefreshing ? "bg-primary animate-pulse" : "bg-success")} />
-          {isRefreshing ? "Updating" : "Live"}
+          {isRefreshing ? "Refreshing" : "Live"}
         </span>
       </div>
 
-      <div className="max-h-[32rem] overflow-y-auto p-4">
+      <div className="border-b border-border bg-secondary/25 px-4 py-3">
+        <AnimatePresence mode="popLayout" initial={false}>
+          <motion.div
+            key={`${status}-${lab.progress}-${latestEvent?.id ?? "none"}`}
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -6 }}
+            transition={{ duration: 0.18 }}
+          >
+            <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Latest</p>
+            <p className="mt-1 text-sm font-medium text-foreground">
+              {latestEvent?.message || lab.status_message || getProvisioningStage(lab.status, lab.progress)}
+            </p>
+          </motion.div>
+        </AnimatePresence>
+      </div>
+
+      <div className="max-h-[32rem] overflow-y-auto p-3">
         {status === "FAILED" && lab.failure_reason ? (
           <div className="mb-3 rounded-lg border border-destructive/25 bg-destructive/8 p-3">
             <div className="flex items-center gap-2 text-sm font-medium text-destructive">
@@ -226,16 +287,35 @@ function ActivityPanel({
           </div>
         ) : null}
 
-        {visibleEvents.length ? (
+        {notices.length || visibleEvents.length ? (
           <div className="space-y-2">
-            <AnimatePresence initial={false}>
+            <AnimatePresence initial={false} mode="popLayout">
+              {notices.map((notice) => (
+                <motion.div
+                  key={notice.id}
+                  layout
+                  initial={{ opacity: 0, y: -8, scale: 0.98 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: 8, scale: 0.98 }}
+                  className={cn("rounded-lg border p-3", noticeTone(notice))}
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                      {notice.title}
+                    </span>
+                    <span className="shrink-0 text-[11px] text-muted-foreground">{formatClock(notice.createdAt)}</span>
+                  </div>
+                  <p className="mt-1.5 text-sm leading-6 text-foreground">{notice.message}</p>
+                </motion.div>
+              ))}
               {visibleEvents.map((event) => (
                 <motion.div
                   key={event.id}
                   layout
-                  initial={{ opacity: 0, y: -6 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: 6 }}
+                  initial={{ opacity: 0, y: -8, scale: 0.98 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: 8, scale: 0.98 }}
+                  transition={{ duration: 0.18 }}
                   className={cn("rounded-lg border p-3", eventTone(event))}
                 >
                   <div className="flex items-center justify-between gap-3">
@@ -249,9 +329,10 @@ function ActivityPanel({
                   <p className="mt-1.5 text-sm leading-6 text-foreground">{event.message}</p>
                   {event.progress !== null ? (
                     <div className="mt-2 h-1 overflow-hidden rounded-full bg-background/80">
-                      <div
+                      <motion.div
                         className="h-full rounded-full bg-primary transition-all"
-                        style={{ width: `${Math.max(4, Math.min(100, event.progress))}%` }}
+                        initial={false}
+                        animate={{ width: `${Math.max(4, Math.min(100, event.progress))}%` }}
                       />
                     </div>
                   ) : null}
@@ -263,7 +344,7 @@ function ActivityPanel({
           <div className="rounded-lg border border-dashed border-border bg-secondary/30 p-6 text-center">
             <Terminal className="mx-auto h-5 w-5 text-muted-foreground/60" />
             <p className="mt-2 text-sm font-medium text-foreground">No activity yet</p>
-            <p className="mt-1 text-xs text-muted-foreground">Provisioning events will appear here as the worker reports progress.</p>
+            <p className="mt-1 text-xs text-muted-foreground">Status changes and actions will appear here.</p>
           </div>
         )}
       </div>
@@ -273,7 +354,6 @@ function ActivityPanel({
 
 export default function LabDetailPage() {
   const params = useParams<{ id: string }>();
-  const { toast } = useToast();
   const { isAuthReady, tokens } = useAuth();
   const [lab, setLab] = useState<LabStatusResponse | null>(null);
   const [isInitialLoading, setIsInitialLoading] = useState(true);
@@ -282,6 +362,19 @@ export default function LabDetailPage() {
   const [confirmStop, setConfirmStop] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [events, setEvents] = useState<LabEvent[]>([]);
+  const [notices, setNotices] = useState<ActivityNotice[]>([]);
+  const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
+
+  const pushActivityNotice = useCallback((notice: Omit<ActivityNotice, "id" | "createdAt">) => {
+    setNotices((current) => [
+      {
+        ...notice,
+        id: crypto.randomUUID(),
+        createdAt: new Date(),
+      },
+      ...current,
+    ].slice(0, 4));
+  }, []);
 
   const loadLab = useCallback(
     async ({ silent = false }: { silent?: boolean } = {}) => {
@@ -302,18 +395,27 @@ export default function LabDetailPage() {
         ]);
         setLab(nextLab);
         setEvents(nextEvents);
+        setLastSyncedAt(new Date());
         setErrorMessage(null);
         return nextLab;
       } catch (error) {
         console.error("Failed to load lab status", error);
-        setErrorMessage(extractApiErrorMessage(error));
+        const message = extractApiErrorMessage(error);
+        setErrorMessage(message);
+        if (silent) {
+          pushActivityNotice({
+            title: "Refresh failed",
+            message,
+            tone: "error",
+          });
+        }
         return null;
       } finally {
         setIsInitialLoading(false);
         setIsRefreshing(false);
       }
     },
-    [isAuthReady, params.id, tokens?.access_token]
+    [isAuthReady, params.id, pushActivityNotice, tokens?.access_token]
   );
 
   useEffect(() => {
@@ -348,9 +450,9 @@ export default function LabDetailPage() {
 
   const downloadConfig = async () => {
     if (!lab || normalizeLabStatus(lab.status) !== "READY") {
-      toast({
+      pushActivityNotice({
         title: "Config not ready",
-        description: "Access config is available after the lab is running.",
+        message: "Access config is available after the lab is running.",
         tone: "info",
       });
       return;
@@ -361,12 +463,16 @@ export default function LabDetailPage() {
     try {
       const { blob, filename } = await getLabConfigDownload(params.id);
       downloadBlob(new Blob([blob], { type: blob.type || "text/plain;charset=utf-8" }), filename);
-      toast({ title: "Access config downloaded", tone: "success" });
+      pushActivityNotice({
+        title: "Downloaded",
+        message: `${filename} saved by the browser.`,
+        tone: "success",
+      });
     } catch (error) {
       console.error("Failed to download access config", error);
-      toast({
+      pushActivityNotice({
         title: "Config unavailable",
-        description: extractApiErrorMessage(error),
+        message: extractApiErrorMessage(error),
         tone: "error",
       });
     } finally {
@@ -379,13 +485,17 @@ export default function LabDetailPage() {
 
     try {
       await stopLab(params.id);
-      toast({ title: "Destroy requested", tone: "success" });
+      pushActivityNotice({
+        title: "Destroy requested",
+        message: "Teardown has been queued. This page will keep refreshing.",
+        tone: "success",
+      });
       await loadLab({ silent: true });
     } catch (error) {
       console.error("Failed to stop lab", error);
-      toast({
+      pushActivityNotice({
         title: "Destroy failed",
-        description: extractApiErrorMessage(error),
+        message: extractApiErrorMessage(error),
         tone: "error",
       });
       await loadLab({ silent: true });
@@ -459,12 +569,6 @@ export default function LabDetailPage() {
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
               <StatusBadge status={lab.status} />
-              {isRefreshing ? (
-                <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-                  <RefreshCw className="h-3 w-3 animate-spin" />
-                  Updating
-                </span>
-              ) : null}
             </div>
             <h1 className="mono mt-3 truncate text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
               {lab.instance_id}
@@ -604,7 +708,13 @@ export default function LabDetailPage() {
           )}
         </div>
 
-        <ActivityPanel events={events} lab={lab} isRefreshing={isRefreshing} />
+        <ActivityPanel
+          events={events}
+          lab={lab}
+          isRefreshing={isRefreshing}
+          notices={notices}
+          lastSyncedAt={lastSyncedAt}
+        />
       </section>
 
       <ConfirmActionDialog
