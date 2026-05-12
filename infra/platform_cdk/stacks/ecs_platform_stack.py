@@ -209,6 +209,32 @@ class EcsPlatformStack(cdk.Stack):
                 resources=["*"],
             )
         )
+        worker_task_role.add_to_policy(
+            iam.PolicyStatement(
+                actions=["ecs:TagResource"],
+                resources=[
+                    cdk.Fn.join(
+                        "",
+                        [
+                            "arn:",
+                            cdk.Aws.PARTITION,
+                            ":ecs:",
+                            cdk.Aws.REGION,
+                            ":",
+                            cdk.Aws.ACCOUNT_ID,
+                            ":task/",
+                            self.cluster.cluster_name,
+                            "/*",
+                        ],
+                    )
+                ],
+                conditions={
+                    "StringEquals": {
+                        "ecs:CreateAction": "RunTask",
+                    }
+                },
+            )
+        )
         # SendCommand authorizes both the SSM document and the target instance.
         # Keep the document permission separate; otherwise an instance tag
         # condition can deny AWS-RunShellScript before dispatch reaches EC2.
