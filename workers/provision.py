@@ -336,9 +336,9 @@ def provision_lab(instance_id: str, template_id: str, user_id: str) -> None:
             if vpn_config:
                 instance.vpn_config_blob = vpn_config
             else:
-                logger.warning(
-                    "No VPN config template configured; /config will return 503 for lab %s",
-                    instance_id,
+                raise VpnGatewayError(
+                    "Could not render VPN config for lab. "
+                    "Ensure LAB_VPN_CONFIG_SECRET_ID points to the WireGuard template secret."
                 )
 
             # Audit records — public_key and client_ip only, never private_key.

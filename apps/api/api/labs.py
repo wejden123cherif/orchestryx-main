@@ -115,6 +115,19 @@ def _render_vpn_config_template(config: str, instance: LabInstance) -> str:
     return rendered
 
 
+def _legacy_vpn_config_renderable(instance: LabInstance) -> bool:
+    if not instance.secrets_key:
+        return False
+
+    try:
+        import json
+        secrets = json.loads(instance.secrets_key)
+    except Exception:
+        return False
+
+    return bool(secrets.get("private_key") and secrets.get("client_ip"))
+
+
 def _load_secret_string(secret_id: str) -> str | None:
     try:
         secrets = boto3.client("secretsmanager", region_name=AWS_REGION)
@@ -716,8 +729,18 @@ async def get_lab_config(
             },
         )
 
-    # Legacy fallback for rows provisioned before Phase 1.
-    # Uses the shared template from Secrets Manager + secrets_key values.
+    # Legacy fallback for rows provisioned before Phase 1. This can only work
+    # for rows that stored enough client material in secrets_key. Modern rows do
+    # not store the private key anywhere except vpn_config_blob, by design.
+    if not _legacy_vpn_config_renderable(instance):
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "VPN config was not stored for this lab. Destroy this lab and "
+                "launch it again after the worker update."
+            ),
+        )
+
     config_template = None
     if LAB_VPN_CONFIG_INLINE:
         config_template = LAB_VPN_CONFIG_INLINE

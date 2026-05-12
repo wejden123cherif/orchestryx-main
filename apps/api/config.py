@@ -102,7 +102,13 @@ LAB_ECS_LOG_GROUP = _optional("LAB_ECS_LOG_GROUP", "/ecs/orchestryx-labs")
 LAB_ECS_LOG_STREAM_PREFIX = _optional("LAB_ECS_LOG_STREAM_PREFIX", "lab")
 LAB_ECS_CPU = _int("LAB_ECS_CPU", 512)
 LAB_ECS_MEMORY_MIB = _int("LAB_ECS_MEMORY_MIB", 1024)
-LAB_VPN_CONFIG_SECRET_ID = _optional("LAB_VPN_CONFIG_SECRET_ID", "")
+# VpnStack's WireGuardGateway writes the client config template to this secret
+# at boot. Keep an env override for non-CDK/local deployments, but make the
+# deployed default line up with the infrastructure-created secret.
+LAB_VPN_CONFIG_SECRET_ID = _optional(
+    "LAB_VPN_CONFIG_SECRET_ID",
+    _optional("ORCHESTRYX_WIREGUARD_CONFIG_SECRET_ID", "orchestryx/vpn/shared"),
+)
 LAB_VPN_CONFIG_INLINE = _optional("LAB_VPN_CONFIG_INLINE", "")
 ORCHESTRYX_WIREGUARD_INSTANCE_ID = _optional("ORCHESTRYX_WIREGUARD_INSTANCE_ID", "")
 ORCHESTRYX_WIREGUARD_SECURITY_GROUP_ID = _optional("ORCHESTRYX_WIREGUARD_SECURITY_GROUP_ID", "")
