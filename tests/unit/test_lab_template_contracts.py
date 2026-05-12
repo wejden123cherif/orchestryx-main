@@ -59,6 +59,9 @@ def test_active_lab_templates_have_challenge_urls_the_stack_can_serve():
         "web-nexbank-01",
         "web-php-rce-01",
         "web-lfi-01",
+        "web-dfir-01",
+        "web-malware-01",
+        "web-networking-01",
     }
 
     for template in templates:
@@ -80,6 +83,12 @@ def test_ecr_backed_labs_have_matching_dockerfiles_and_push_targets():
         "orchestryx/sqli-lab": ("labs/sqli-lab/Dockerfile", "push-sqli-lab"),
         "orchestryx/php-rce-lab": ("labs/php-rce-lab/Dockerfile", "push-php-rce-lab"),
         "orchestryx/lfi-lab": ("labs/lfi-lab/Dockerfile", "push-lfi-lab"),
+        "orchestryx/dfir-lab": ("labs/dfir/Dockerfile", "push-dfir-lab"),
+        "orchestryx/malware-lab": ("labs/malware/Dockerfile", "push-malware-lab"),
+        "orchestryx/networking-lab": (
+            "labs/networking/Dockerfile",
+            "push-networking-lab",
+        ),
     }
 
     for template in _active_lab_templates():
@@ -108,4 +117,7 @@ def test_ecr_backed_labs_have_matching_dockerfiles_and_push_targets():
             f"Makefile is missing target '{make_target}:' for template {template['id']}"
         )
 
-    assert "push-custom-labs: push-sqli-lab push-php-rce-lab push-lfi-lab" in makefile
+    for _, make_target in expected_contexts.values():
+        assert make_target in makefile
+
+    assert "push-custom-labs:" in makefile

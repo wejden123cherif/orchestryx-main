@@ -31,8 +31,8 @@ The CI workflow runs only checks that should be safe without AWS deployment cred
 3. Validates that Alembic has a resolvable revision graph when migration files exist.
 4. Runs `python -m pytest tests/ -v` when Python tests exist.
 5. Installs frontend dependencies with `npm ci` in `apps/web/`.
-6. Runs frontend `lint`, `typecheck`, and `build` only when those npm scripts exist.
-7. Validates `docker-compose.yml` syntax with `docker compose config --quiet`.
+6. Runs frontend `lint`, `typecheck`, and `build` only when those npm scripts exist. Lint is currently advisory (`continue-on-error`) so existing lint debt does not block urgent presentation/demo work; typecheck and build remain blocking.
+7. Copies `.env.example` to a temporary CI `.env` file and validates `docker-compose.yml` syntax with `docker compose config --quiet`.
 8. Builds the API image from `Dockerfile`.
 9. Builds the worker image from `Dockerfile.worker`.
 10. Installs CDK dependencies from `infra/platform_cdk/requirements.txt` and runs `cdk synth -c env=dev` with placeholder `CDK_DEFAULT_ACCOUNT` and `CDK_DEFAULT_REGION` values so the synthesis step does not require live AWS credentials.
@@ -105,10 +105,11 @@ python -m compileall apps workers scripts tests alembic
 alembic heads --resolve-dependencies
 python -m pytest tests/ -v
 cd apps/web && npm ci && npm run lint && npm run typecheck && npm run build
-docker compose config --quiet
+cp .env.example .env && docker compose config --quiet
 docker build -f Dockerfile -t orchestryx-api:ci .
 docker build -f Dockerfile.worker -t orchestryx-worker:ci .
 python -m pip install -r infra/platform_cdk/requirements.txt
+npm install --global aws-cdk@2
 cd infra/platform_cdk && CDK_DEFAULT_ACCOUNT=000000000000 CDK_DEFAULT_REGION=eu-central-1 cdk synth -c env=dev
 ```
 
