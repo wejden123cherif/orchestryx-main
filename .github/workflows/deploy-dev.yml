@@ -1,0 +1,96 @@
+name: Deploy dev
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Deployment target passed to scripts/linux/deploy.sh.
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - api
+          - worker
+          - images
+      image_tag:
+        description: Docker image tag to build and push.
+        required: true
+        default: latest
+        type: string
+      wait_for_stability:
+        description: Wait for ECS services to become stable after update.
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy-dev:
+    name: Deploy dev application images
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: dev
+    concurrency:
+      group: deploy-dev
+      cancel-in-progress: false
+
+    env:
+      ORCHESTRYX_ENV: dev
+      AWS_REGION: ${{ vars.AWS_REGION || secrets.AWS_REGION }}
+      AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID || secrets.AWS_ACCOUNT_ID }}
+      AWS_ROLE_TO_ASSUME: ${{ vars.AWS_ROLE_TO_ASSUME || secrets.AWS_ROLE_TO_ASSUME }}
+      ORCHESTRYX_ECS_CLUSTER_NAME: ${{ vars.ORCHESTRYX_ECS_CLUSTER_NAME }}
+      ORCHESTRYX_API_SERVICE_NAME: ${{ vars.ORCHESTRYX_API_SERVICE_NAME }}
+      ORCHESTRYX_WORKER_SERVICE_NAME: ${{ vars.ORCHESTRYX_WORKER_SERVICE_NAME }}
+      ORCHESTRYX_API_ECR_REPO_URI: ${{ vars.ORCHESTRYX_API_ECR_REPO_URI }}
+      ORCHESTRYX_WORKER_ECR_REPO_URI: ${{ vars.ORCHESTRYX_WORKER_ECR_REPO_URI }}
+      IMAGE_TAG: ${{ inputs.image_tag }}
+      WAIT_FOR_STABILITY: ${{ inputs.wait_for_stability }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate deployment configuration
+        env:
+          TARGET: ${{ inputs.target }}
+        run: |
+          if [[ ! "${IMAGE_TAG}" =~ ^[A-Za-z0-9._-]{1,128}$ ]]; then
+            echo "Invalid image_tag. Use only letters, numbers, dots, underscores, and hyphens." >&2
+            exit 1
+          fi
+
+          required=(
+            AWS_ROLE_TO_ASSUME
+            AWS_REGION
+            ORCHESTRYX_API_ECR_REPO_URI
+            ORCHESTRYX_WORKER_ECR_REPO_URI
+          )
+
+          if [[ "${TARGET}" != "images" ]]; then
+            required+=(
+              ORCHESTRYX_ECS_CLUSTER_NAME
+              ORCHESTRYX_API_SERVICE_NAME
+              ORCHESTRYX_WORKER_SERVICE_NAME
+            )
+          fi
+
+          for name in "${required[@]}"; do
+            if [ -z "${!name:-}" ]; then
+              echo "Missing required GitHub variable or secret: ${name}" >&2
+              exit 1
+            fi
+          done
+
+      - name: Configure AWS credentials with OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Deploy with existing script
+        run: ./scripts/linux/deploy.sh "${{ inputs.target }}"
