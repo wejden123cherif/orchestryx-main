@@ -176,8 +176,49 @@ class EcsPlatformStack(cdk.Stack):
                     "cognito-idp:ForgotPassword",
                     "cognito-idp:ConfirmForgotPassword",
                     "cognito-idp:ChangePassword",
+                    "cognito-idp:DescribeUserPool",
                     "secretsmanager:GetSecretValue",
                     "secretsmanager:DescribeSecret",
+                ],
+                resources=["*"],
+            )
+        )
+        # Admin console monitoring — read-only visibility into the platform's
+        # own AWS resources. These are separated from the core API policy so the
+        # blast radius of each permission set stays clear.
+        api_task_role.add_to_policy(
+            iam.PolicyStatement(
+                actions=[
+                    "ecs:DescribeServices",
+                    "ecs:ListTasks",
+                    "ecs:DescribeTasks",
+                    "rds:DescribeDBClusters",
+                    "ecr:DescribeImages",
+                    "ecr:BatchGetImage",
+                    "logs:DescribeLogGroups",
+                    "logs:DescribeLogStreams",
+                    "logs:GetLogEvents",
+                    "sqs:GetQueueUrl",
+                    "sqs:GetQueueAttributes",
+                    "cloudwatch:GetMetricStatistics",
+                    "cloudwatch:DescribeAlarms",
+                    "ce:GetCostAndUsage",
+                    "ec2:DescribeInstances",
+                    "ec2:DescribeVpcs",
+                    "ec2:DescribeSubnets",
+                    "ec2:DescribeSecurityGroups",
+                    "ec2:DescribeNetworkInterfaces",
+                    "ec2:DescribeRouteTables",
+                    "elasticloadbalancing:DescribeLoadBalancers",
+                    "elasticloadbalancing:DescribeTargetGroups",
+                    "elasticloadbalancing:DescribeTargetHealth",
+                    "autoscaling:DescribeAutoScalingGroups",
+                    "application-autoscaling:DescribeScalableTargets",
+                    "cloudformation:ListStacks",
+                    "secretsmanager:ListSecrets",
+                    "iam:ListRoles",
+                    "iam:ListAttachedRolePolicies",
+                    "iam:ListRolePolicies",
                 ],
                 resources=["*"],
             )
@@ -295,6 +336,9 @@ class EcsPlatformStack(cdk.Stack):
             runtime_secret.grant_read(api_task_role)
             runtime_secret.grant_read(worker_task_role)
 
+        _api_service_name = ecs_config.get("api_service_name", f"orchestryx-{env_name}-api-service")
+        _worker_service_name = ecs_config.get("worker_service_name", f"orchestryx-{env_name}-worker-service")
+
         shared_environment = {
             "PYTHONUNBUFFERED": "1",
             "ORCHESTRYX_ENV": env_name,
@@ -307,6 +351,11 @@ class EcsPlatformStack(cdk.Stack):
             "SQS_PROVISION_URL": provision_queue.queue_url,
             "SQS_DESTROY_URL": destroy_queue.queue_url,
             "LAB_ECS_CLUSTER": self.cluster.cluster_name,
+            # Admin console monitoring — explicit names so the API knows exactly
+            # which resources to inspect without relying on defaults.
+            "AWS_ECS_CLUSTER": self.cluster.cluster_name,
+            "AWS_API_SERVICE": _api_service_name,
+            "AWS_WORKER_SERVICE": _worker_service_name,
             "LAB_ECS_SUBNET_IDS": cdk.Fn.join(
                 ",",
                 vpc.select_subnets(subnet_type=ec2.SubnetType.PRIVATE_WITH_EGRESS).subnet_ids,
@@ -336,9 +385,7 @@ class EcsPlatformStack(cdk.Stack):
             vpc=vpc,
             repository=api_repository,
             log_group=api_log_group,
-            service_name=ecs_config.get(
-                "api_service_name", f"orchestryx-{env_name}-api-service"
-            ),
+            service_name=_api_service_name,
             container_name="orchestryx-api",
             command=[
                 "uvicorn",
@@ -368,9 +415,7 @@ class EcsPlatformStack(cdk.Stack):
             vpc=vpc,
             repository=worker_repository,
             log_group=worker_log_group,
-            service_name=ecs_config.get(
-                "worker_service_name", f"orchestryx-{env_name}-worker-service"
-            ),
+            service_name=_worker_service_name,
             container_name="orchestryx-worker",
             command=[
                 "celery",
@@ -529,18 +574,8 @@ class EcsPlatformStack(cdk.Stack):
 
         # ── Outputs ────────────────────────────────────────────────────────
         cdk.CfnOutput(self, "EcsClusterName", value=self.cluster.cluster_name)
-        cdk.CfnOutput(
-            self,
-            "ApiServiceName",
-            value=ecs_config.get("api_service_name", f"orchestryx-{env_name}-api-service"),
-        )
-        cdk.CfnOutput(
-            self,
-            "WorkerServiceName",
-            value=ecs_config.get(
-                "worker_service_name", f"orchestryx-{env_name}-worker-service"
-            ),
-        )
+        cdk.CfnOutput(self, "ApiServiceName", value=_api_service_name)
+        cdk.CfnOutput(self, "WorkerServiceName", value=_worker_service_name)
         cdk.CfnOutput(self, "LabSecurityGroupId", value=self.lab_security_group.security_group_id)
         cdk.CfnOutput(self, "LabTaskRoleArn", value=lab_task_role.role_arn)
         cdk.CfnOutput(self, "ApiSecurityGroupId", value=self.api_security_group.security_group_id)

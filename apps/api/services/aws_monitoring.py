@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import quote
@@ -77,8 +78,9 @@ def _estimate_instance_hourly_cost(instance_type: str | None) -> float | None:
     return rates.get(instance_type)
 
 
-def _ecs_service(ecs, service_name: str) -> dict[str, Any]:
+def _ecs_service(service_name: str) -> dict[str, Any]:
     try:
+        ecs = _client("ecs")
         response = ecs.describe_services(cluster=AWS_ECS_CLUSTER, services=[service_name])
         failures = response.get("failures", [])
         if failures:
@@ -108,8 +110,9 @@ def _ecs_service(ecs, service_name: str) -> dict[str, Any]:
         return {"name": service_name, **_error("ECS service unavailable", exc)}
 
 
-def _ecs_tasks(ecs) -> list[dict[str, Any]]:
+def _ecs_tasks() -> list[dict[str, Any]]:
     try:
+        ecs = _client("ecs")
         task_arns: list[str] = []
         for service_name in [AWS_API_SERVICE, AWS_WORKER_SERVICE]:
             task_arns.extend(
@@ -734,7 +737,7 @@ def _costs() -> dict[str, Any]:
         )
         services = []
         total = 0.0
-        for group in response.get("ResultsByTime", [{}])[0].get("Groups", []):
+        for group in (response.get("ResultsByTime") or [{}])[0].get("Groups", []):
             amount = float(group["Metrics"]["UnblendedCost"]["Amount"])
             if amount <= 0:
                 continue
@@ -759,39 +762,72 @@ def _costs() -> dict[str, Any]:
 
 
 def get_aws_overview() -> dict[str, Any]:
-    ecs = _client("ecs")
+    _tasks: dict[str, tuple] = {
+        "ecs_api": (_ecs_service, (AWS_API_SERVICE,)),
+        "ecs_worker": (_ecs_service, (AWS_WORKER_SERVICE,)),
+        "ecs_tasks": (_ecs_tasks, ()),
+        "sqs_provision": (_queue, (PROVISION_QUEUE,)),
+        "sqs_destroy": (_queue, (DESTROY_QUEUE,)),
+        "aurora": (_aurora, ()),
+        "cognito": (_cognito, ()),
+        "ecr_api": (_ecr_image, (AWS_ECR_API_REPOSITORY,)),
+        "ecr_worker": (_ecr_image, (AWS_ECR_WORKER_REPOSITORY,)),
+        "log_api": (_log_group, (AWS_API_LOG_GROUP,)),
+        "log_worker": (_log_group, (AWS_WORKER_LOG_GROUP,)),
+        "stacks": (_lab_stacks, ()),
+        "instances": (_lab_instances, ()),
+        "network": (_network, ()),
+        "load_balancing": (_load_balancing, ()),
+        "autoscaling": (_autoscaling, ()),
+        "secrets": (_secrets, ()),
+        "iam": (_iam, ()),
+        "metrics": (_ecs_metrics, ()),
+        "alarms": (_alarms, ()),
+        "costs": (_costs, ()),
+    }
+
+    results: dict[str, Any] = {}
+    with ThreadPoolExecutor(max_workers=len(_tasks)) as pool:
+        futures = {pool.submit(fn, *args): key for key, (fn, args) in _tasks.items()}
+        for future in as_completed(futures):
+            key = futures[future]
+            try:
+                results[key] = future.result()
+            except Exception as exc:
+                results[key] = {"status": "ERROR", "error": str(exc)}
+
     return {
         "region": AWS_REGION,
         "cluster": AWS_ECS_CLUSTER,
         "ecs": {
-            "api": _ecs_service(ecs, AWS_API_SERVICE),
-            "worker": _ecs_service(ecs, AWS_WORKER_SERVICE),
-            "tasks": _ecs_tasks(ecs),
+            "api": results["ecs_api"],
+            "worker": results["ecs_worker"],
+            "tasks": results["ecs_tasks"],
         },
         "sqs": {
-            "provision": _queue(PROVISION_QUEUE),
-            "destroy": _queue(DESTROY_QUEUE),
+            "provision": results["sqs_provision"],
+            "destroy": results["sqs_destroy"],
         },
-        "aurora": _aurora(),
-        "cognito": _cognito(),
+        "aurora": results["aurora"],
+        "cognito": results["cognito"],
         "ecr": {
-            "api": _ecr_image(AWS_ECR_API_REPOSITORY),
-            "worker": _ecr_image(AWS_ECR_WORKER_REPOSITORY),
+            "api": results["ecr_api"],
+            "worker": results["ecr_worker"],
         },
         "logs": {
-            "api": _log_group(AWS_API_LOG_GROUP),
-            "worker": _log_group(AWS_WORKER_LOG_GROUP),
+            "api": results["log_api"],
+            "worker": results["log_worker"],
         },
-        "cloudformation": {"lab_stacks": _lab_stacks()},
-        "ec2": {"lab_instances": _lab_instances()},
-        "network": _network(),
-        "load_balancing": _load_balancing(),
-        "autoscaling": _autoscaling(),
-        "secrets": _secrets(),
-        "iam": _iam(),
-        "metrics": {"ecs": _ecs_metrics()},
-        "alarms": _alarms(),
-        "costs": _costs(),
+        "cloudformation": {"lab_stacks": results["stacks"]},
+        "ec2": {"lab_instances": results["instances"]},
+        "network": results["network"],
+        "load_balancing": results["load_balancing"],
+        "autoscaling": results["autoscaling"],
+        "secrets": results["secrets"],
+        "iam": results["iam"],
+        "metrics": {"ecs": results["metrics"]},
+        "alarms": results["alarms"],
+        "costs": results["costs"],
     }
 
 

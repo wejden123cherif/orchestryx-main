@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Annotated
@@ -542,7 +543,7 @@ async def list_lab_events(
 async def admin_aws_overview(
     _: User = Depends(require_admin),
 ):
-    return get_aws_overview()
+    return await asyncio.to_thread(get_aws_overview)
 
 
 @router.get("/aws/logs/{service}", response_class=PlainTextResponse)
@@ -551,6 +552,6 @@ async def admin_aws_logs(
     _: User = Depends(require_admin),
 ):
     try:
-        return get_recent_logs(service)
+        return await asyncio.to_thread(get_recent_logs, service)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
