@@ -36,6 +36,8 @@ interface AuthContextValue {
   logout: () => void;
 }
 
+const TOKENS_KEY = "orchestryx_auth_tokens";
+
 // Global auth context keeps token state in memory only for this browser session.
 export const AuthContext = createContext<AuthContextValue | undefined>(
   undefined
@@ -48,8 +50,23 @@ interface AuthProviderProps {
 export function AuthProvider({ children }: AuthProviderProps) {
   const [tokens, setTokens] = useState<AuthTokens | null>(null);
   const [user, setUser] = useState<UserProfile | null>(null);
-  const [isAuthReady] = useState(true);
+  const [isAuthReady, setIsAuthReady] = useState(false);
   const [isLoadingUser, setIsLoadingUser] = useState(false);
+
+  // Initialize auth state from localStorage on mount.
+  useEffect(() => {
+    const storedTokens = localStorage.getItem(TOKENS_KEY);
+    if (storedTokens) {
+      try {
+        const parsed = JSON.parse(storedTokens) as AuthTokens;
+        setTokens(parsed);
+      } catch (error) {
+        console.error("Failed to parse stored tokens", error);
+        localStorage.removeItem(TOKENS_KEY);
+      }
+    }
+    setIsAuthReady(true);
+  }, []);
 
   // Keeps axios interceptor synchronized with the latest access token.
   useEffect(() => {
@@ -76,6 +93,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       setUser(profile);
     } catch (error) {
       console.error("Failed to load user profile", error);
+      localStorage.removeItem(TOKENS_KEY);
       setTokens(null);
       setUser(null);
     } finally {
@@ -90,6 +108,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
   const login = useCallback(async (payload: EmailPasswordPayload) => {
     const nextTokens = await loginUser(payload);
+    localStorage.setItem(TOKENS_KEY, JSON.stringify(nextTokens));
     setAccessToken(nextTokens.access_token);
     setTokens(nextTokens);
   }, []);
@@ -110,12 +129,14 @@ export function AuthProvider({ children }: AuthProviderProps) {
     const nextTokens = await refreshTokens({
       refresh_token: tokens.refresh_token,
     });
+    localStorage.setItem(TOKENS_KEY, JSON.stringify(nextTokens));
     setAccessToken(nextTokens.access_token);
     setTokens(nextTokens);
   }, [tokens]);
 
   // Clears all auth information from memory and session UI state.
   const logout = useCallback(() => {
+    localStorage.removeItem(TOKENS_KEY);
     setAccessToken(null);
     setTokens(null);
     setUser(null);
