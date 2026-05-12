@@ -92,6 +92,13 @@ type DetailPanel =
   | null;
 
 type Toast = { id: string; type: "success" | "error" | "warning"; title: string; message: string };
+type AwsQuickLink = {
+  label: string;
+  description: string;
+  href: string;
+  icon: typeof Activity;
+  tone?: "neutral" | "green" | "amber" | "red" | "blue";
+};
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -118,6 +125,127 @@ function statusColor(value?: string | null): "green" | "amber" | "red" | "blue" 
   if (["QUEUED", "PROVISIONING", "STARTING", "DESTROYING", "MEDIUM", "LAGGING"].includes(n)) return "amber";
   if (["READY", "RUNNING", "ACTIVE", "OK", "LOW", "LIVE", "CREATE_COMPLETE"].includes(n)) return "green";
   return "neutral";
+}
+
+function awsConsoleUrl(region: string, service: string, fragment = ""): string {
+  return `https://${region}.console.aws.amazon.com/${service}/home?region=${region}${fragment}`;
+}
+
+function encodeConsoleSegment(value?: string | null): string {
+  return encodeURIComponent(value ?? "");
+}
+
+function buildAwsQuickLinks(aws: AwsOverview | null): AwsQuickLink[] {
+  const region = aws?.region ?? "eu-central-1";
+  const cluster = aws?.cluster ?? "";
+  const ecsBase = `https://${region}.console.aws.amazon.com/ecs/v2/clusters/${encodeConsoleSegment(cluster)}`;
+  const apiService = aws?.ecs.api.name;
+  const workerService = aws?.ecs.worker.name;
+  const auroraId = aws?.aurora.id;
+  const firstVpc = aws?.network.vpcs[0];
+  const firstSecret = aws?.secrets.items[0];
+
+  return [
+    {
+      label: "ECS Cluster",
+      description: cluster || "Services and tasks",
+      href: cluster ? `${ecsBase}/services?region=${region}` : awsConsoleUrl(region, "ecs", "#/clusters"),
+      icon: Server,
+      tone: "blue",
+    },
+    {
+      label: "API Service",
+      description: apiService || "API task service",
+      href: cluster && apiService
+        ? `${ecsBase}/services/${encodeConsoleSegment(apiService)}/health?region=${region}`
+        : awsConsoleUrl(region, "ecs", "#/clusters"),
+      icon: Globe,
+      tone: statusColor(aws?.ecs.api.status),
+    },
+    {
+      label: "Worker Service",
+      description: workerService || "Provisioning workers",
+      href: cluster && workerService
+        ? `${ecsBase}/services/${encodeConsoleSegment(workerService)}/health?region=${region}`
+        : awsConsoleUrl(region, "ecs", "#/clusters"),
+      icon: Settings,
+      tone: statusColor(aws?.ecs.worker.status),
+    },
+    {
+      label: "Aurora",
+      description: auroraId || "Database cluster",
+      href: auroraId
+        ? awsConsoleUrl(region, "rds", `#database:id=${encodeConsoleSegment(auroraId)};is-cluster=true`)
+        : awsConsoleUrl(region, "rds", "#databases:"),
+      icon: Database,
+      tone: statusColor(aws?.aurora.status),
+    },
+    {
+      label: "CloudWatch Logs",
+      description: aws?.logs.api.name || "API logs",
+      href: aws?.logs.api.console_url ?? awsConsoleUrl(region, "cloudwatch", "#logsV2:log-groups"),
+      icon: FileText,
+      tone: "neutral",
+    },
+    {
+      label: "SQS Queues",
+      description: `${aws?.sqs.provision.queued ?? 0} queued`,
+      href: aws?.sqs.provision.console_url ?? awsConsoleUrl(region, "sqs", "#/queues"),
+      icon: Layers,
+      tone: (aws?.sqs.provision.queued ?? 0) > 0 ? "amber" : "green",
+    },
+    {
+      label: "EC2 Instances",
+      description: `${aws?.ec2.lab_instances.length ?? 0} lab hosts`,
+      href: awsConsoleUrl(region, "ec2", "#Instances:"),
+      icon: HardDrive,
+      tone: "neutral",
+    },
+    {
+      label: "VPC",
+      description: firstVpc?.id ?? "Network resources",
+      href: firstVpc?.console_url ?? `https://${region}.console.aws.amazon.com/vpcconsole/home?region=${region}#vpcs:`,
+      icon: Network,
+      tone: "neutral",
+    },
+    {
+      label: "Security Groups",
+      description: `${aws?.network.security_groups.length ?? 0} groups`,
+      href: awsConsoleUrl(region, "ec2", "#SecurityGroups:"),
+      icon: Shield,
+      tone: "blue",
+    },
+    {
+      label: "ECR",
+      description: aws?.ecr.api.repository || "Container images",
+      href: aws?.ecr.api.console_url ?? awsConsoleUrl(region, "ecr", "#/repositories"),
+      icon: Cloud,
+      tone: statusColor(aws?.ecr.api.status),
+    },
+    {
+      label: "Cognito",
+      description: aws?.cognito.id || "User pool",
+      href: aws?.cognito.id
+        ? `https://${region}.console.aws.amazon.com/cognito/v2/idp/user-pools/${encodeConsoleSegment(aws.cognito.id)}/users?region=${region}`
+        : `https://${region}.console.aws.amazon.com/cognito/v2/idp/user-pools?region=${region}`,
+      icon: Users,
+      tone: statusColor(aws?.cognito.status),
+    },
+    {
+      label: "Secrets",
+      description: firstSecret?.name ?? "Runtime secrets",
+      href: firstSecret?.console_url ?? awsConsoleUrl(region, "secretsmanager", "#!/listSecrets"),
+      icon: Lock,
+      tone: "neutral",
+    },
+    {
+      label: "Costs",
+      description: money(aws?.costs.total),
+      href: `https://${region}.console.aws.amazon.com/costmanagement/home?region=${region}#/cost-explorer`,
+      icon: DollarSign,
+      tone: "neutral",
+    },
+  ];
 }
 
 // ─── Reusable UI pieces ─────────────────────────────────────────────────────
@@ -219,6 +347,99 @@ function Toasts({ items, onDismiss }: { items: Toast[]; onDismiss: (id: string) 
         </div>
       ))}
     </div>
+  );
+}
+
+function AwsQuickLinksRail({ aws, loading }: { aws: AwsOverview | null; loading: boolean }) {
+  const links = useMemo(() => buildAwsQuickLinks(aws), [aws]);
+  const primaryLinks = links.slice(0, 6);
+  const secondaryLinks = links.slice(6);
+
+  return (
+    <aside className="xl:sticky xl:top-20 xl:self-start">
+      <section className="app-card overflow-hidden">
+        <div className="border-b border-border px-4 py-3">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-semibold text-foreground">AWS Console</h2>
+              <p className="mt-0.5 text-[11px] text-muted-foreground">
+                {aws?.region ?? "Region pending"} quick links
+              </p>
+            </div>
+            <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary">
+              <ArrowUpRight className="h-4 w-4" />
+            </span>
+          </div>
+        </div>
+
+        <div className="p-3">
+          {loading && !aws ? (
+            <div className="space-y-2">
+              {Array.from({ length: 6 }).map((_, index) => (
+                <Skeleton key={index} className="h-12 w-full" />
+              ))}
+            </div>
+          ) : (
+            <div className="space-y-1.5">
+              {primaryLinks.map((link) => {
+                const Icon = link.icon;
+                return (
+                  <a
+                    key={link.label}
+                    href={link.href}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="group flex items-center gap-3 rounded-lg border border-transparent px-3 py-2.5 transition hover:border-primary/20 hover:bg-secondary/55"
+                  >
+                    <span
+                      className={cn(
+                        "flex h-8 w-8 shrink-0 items-center justify-center rounded-lg",
+                        link.tone === "green" && "bg-success/10 text-success",
+                        link.tone === "amber" && "bg-warning/10 text-warning",
+                        link.tone === "red" && "bg-destructive/10 text-destructive",
+                        link.tone === "blue" && "bg-primary/10 text-primary",
+                        (!link.tone || link.tone === "neutral") && "bg-secondary text-muted-foreground"
+                      )}
+                    >
+                      <Icon className="h-4 w-4" />
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-[13px] font-medium text-foreground">{link.label}</span>
+                      <span className="block truncate text-[11px] text-muted-foreground">{link.description}</span>
+                    </span>
+                    <ArrowUpRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground/45 transition group-hover:text-primary" />
+                  </a>
+                );
+              })}
+            </div>
+          )}
+
+          <div className="mt-3 border-t border-border pt-3">
+            <p className="mb-2 px-2 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/70">
+              More services
+            </p>
+            <div className="grid grid-cols-2 gap-1.5">
+              {secondaryLinks.map((link) => {
+                const Icon = link.icon;
+                return (
+                  <a
+                    key={link.label}
+                    href={link.href}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex min-h-10 items-center gap-2 rounded-lg border border-border bg-secondary/25 px-2.5 py-2 text-[11px] font-medium text-muted-foreground transition hover:border-primary/20 hover:bg-secondary hover:text-foreground"
+                    title={link.description}
+                  >
+                    <Icon className="h-3.5 w-3.5 shrink-0" />
+                    <span className="truncate">{link.label}</span>
+                  </a>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      </section>
+    </aside>
   );
 }
 
@@ -759,15 +980,17 @@ export default function AdminPage() {
         </div>
       </div>
 
-      {/* ═══ OVERVIEW ═══ */}
-      {activeTab === "overview" && (
-        <div className="space-y-6">
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <MetricCard icon={Server} label="Active labs" value={overview?.labs.active ?? 0} sub={`${overview?.labs.failed ?? 0} failed, ${overview?.labs.queued ?? 0} queued`} tone="blue" />
-            <MetricCard icon={HardDrive} label="Running compute" value={runningInstances} sub={`${instances.length} tagged hosts`} tone="green" />
-            <MetricCard icon={Shield} label="Security exposure" value={highRiskGroups} sub="high-risk groups" tone={highRiskGroups > 0 ? "red" : "green"} />
-            <MetricCard icon={DollarSign} label="Period spend" value={money(aws?.costs.total)} sub={`${slowJobs} slow jobs · ${activeUsers} active users`} tone="neutral" />
-          </div>
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_18rem]">
+        <main className="min-w-0 space-y-6">
+          {/* ═══ OVERVIEW ═══ */}
+          {activeTab === "overview" && (
+            <div className="space-y-6">
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                <MetricCard icon={Server} label="Active labs" value={overview?.labs.active ?? 0} sub={`${overview?.labs.failed ?? 0} failed, ${overview?.labs.queued ?? 0} queued`} tone="blue" />
+                <MetricCard icon={HardDrive} label="Running compute" value={runningInstances} sub={`${instances.length} tagged hosts`} tone="green" />
+                <MetricCard icon={Shield} label="Security exposure" value={highRiskGroups} sub="high-risk groups" tone={highRiskGroups > 0 ? "red" : "green"} />
+                <MetricCard icon={DollarSign} label="Period spend" value={money(aws?.costs.total)} sub={`${slowJobs} slow jobs · ${activeUsers} active users`} tone="neutral" />
+              </div>
 
           <div className="grid gap-6 lg:grid-cols-2">
             <SectionCard title="Operator findings" description="Automated health checks">
@@ -814,11 +1037,11 @@ export default function AdminPage() {
               </div>
             </SectionCard>
           </div>
-        </div>
-      )}
+            </div>
+          )}
 
       {/* ═══ LABS ═══ */}
-      {activeTab === "labs" && (
+          {activeTab === "labs" && (
         <SectionCard title="Labs" description="Lab sessions with lifecycle, TTL, cost, and admin actions">
           <DataTable
             data={labs}
@@ -887,10 +1110,10 @@ export default function AdminPage() {
             ]}
           />
         </SectionCard>
-      )}
+          )}
 
       {/* ═══ USERS ═══ */}
-      {activeTab === "users" && (
+          {activeTab === "users" && (
         <SectionCard title="Users" description="Accounts, roles, credits, and activity">
           <DataTable
             data={users}
@@ -941,10 +1164,10 @@ export default function AdminPage() {
             ]}
           />
         </SectionCard>
-      )}
+          )}
 
       {/* ═══ INFRASTRUCTURE ═══ */}
-      {activeTab === "infra" && (
+          {activeTab === "infra" && (
         <div className="space-y-6">
           {/* Compute */}
           <SectionCard title="EC2 Compute" description="Tagged Orchestryx lab hosts">
@@ -1149,10 +1372,10 @@ export default function AdminPage() {
             </div>
           </SectionCard>
         </div>
-      )}
+          )}
 
       {/* ═══ BILLING ═══ */}
-      {activeTab === "billing" && (
+          {activeTab === "billing" && (
         <div className="space-y-6">
           <div className="grid gap-4 sm:grid-cols-3">
             <MetricCard icon={DollarSign} label="Cost Explorer" value={money(aws?.costs.total)} sub={aws?.costs.period ?? "—"} tone="blue" />
@@ -1224,10 +1447,10 @@ export default function AdminPage() {
             />
           </SectionCard>
         </div>
-      )}
+          )}
 
       {/* ═══ JOBS ═══ */}
-      {activeTab === "jobs" && (
+          {activeTab === "jobs" && (
         <SectionCard title="Provisioning Jobs" description="Lifecycle jobs with steps, retries, errors, and cleanup">
           <DataTable
             data={jobs}
@@ -1265,10 +1488,10 @@ export default function AdminPage() {
             ]}
           />
         </SectionCard>
-      )}
+          )}
 
       {/* ═══ LOGS ═══ */}
-      {activeTab === "logs" && (
+          {activeTab === "logs" && (
         <SectionCard
           title="CloudWatch Log Tail"
           description="Live tail from ECS services"
@@ -1309,10 +1532,10 @@ export default function AdminPage() {
             {logs || "Select a service to load logs."}
           </pre>
         </SectionCard>
-      )}
+          )}
 
       {/* ═══ SETTINGS ═══ */}
-      {activeTab === "settings" && (
+          {activeTab === "settings" && (
         <div className="grid gap-6 lg:grid-cols-2">
           <SectionCard title="Telemetry inputs" description="Environment and AWS configuration">
             <div className="divide-y divide-border">
@@ -1345,7 +1568,11 @@ export default function AdminPage() {
             </div>
           </SectionCard>
         </div>
-      )}
+          )}
+        </main>
+
+        <AwsQuickLinksRail aws={aws} loading={loading} />
+      </div>
 
       {/* ─── Detail dialog ─── */}
       <Dialog open={detail !== null} onOpenChange={(open) => !open && setDetail(null)}>

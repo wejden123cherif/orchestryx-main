@@ -20,12 +20,16 @@ import {
   type NodeMouseHandler,
   type NodeTypes,
 } from "@xyflow/react";
-import { motion } from "framer-motion";
+import { AnimatePresence, motion } from "framer-motion";
 import {
   Download,
   Eraser,
+  Link2,
+  MousePointer2,
+  Plus,
   Rocket,
   Save,
+  Search,
   ShieldAlert,
   X,
 } from "lucide-react";
@@ -49,7 +53,6 @@ import { useToast } from "@/components/ui/toast";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { extractApiErrorMessage, startCustomLab } from "@/lib/api";
 import type {
-  BuilderCategory,
   BuilderEdgeData,
   BuilderMachineTemplate,
   ConnectionAction,
@@ -89,7 +92,7 @@ const MACHINE_TEMPLATES: BuilderMachineTemplate[] = [
     os: "Kali Linux",
     version: "2024.4",
     kind: "machine",
-    icon: "K",
+    icon: "💻",
     ports: [22],
     software: [{ name: "metasploit", version: "6.4", cves: [] }],
   },
@@ -100,7 +103,7 @@ const MACHINE_TEMPLATES: BuilderMachineTemplate[] = [
     os: "Parrot OS",
     version: "6.1",
     kind: "machine",
-    icon: "P",
+    icon: "🧪",
     ports: [22],
     software: [{ name: "nmap", version: "7.95", cves: [] }],
   },
@@ -111,7 +114,7 @@ const MACHINE_TEMPLATES: BuilderMachineTemplate[] = [
     os: "Ubuntu",
     version: "22.04",
     kind: "machine",
-    icon: "U",
+    icon: "🖥️",
     ports: [22, 80],
     software: [{ name: "nginx", version: "1.24.0", cves: [] }],
   },
@@ -122,7 +125,7 @@ const MACHINE_TEMPLATES: BuilderMachineTemplate[] = [
     os: "Windows Server",
     version: "2019",
     kind: "machine",
-    icon: "W",
+    icon: "🪟",
     ports: [3389, 445],
     software: [{ name: "windows", version: "server-2019", cves: [] }],
   },
@@ -133,7 +136,7 @@ const MACHINE_TEMPLATES: BuilderMachineTemplate[] = [
     os: "Windows Server",
     version: "2016",
     kind: "machine",
-    icon: "W",
+    icon: "🪟",
     ports: [3389, 445],
     software: [{ name: "windows", version: "server-2016", cves: [] }],
   },
@@ -144,7 +147,7 @@ const MACHINE_TEMPLATES: BuilderMachineTemplate[] = [
     os: "CentOS",
     version: "7",
     kind: "machine",
-    icon: "C",
+    icon: "▣",
     ports: [22, 80],
     software: [{ name: "apache", version: "2.4.58", cves: [] }],
   },
@@ -155,7 +158,7 @@ const MACHINE_TEMPLATES: BuilderMachineTemplate[] = [
     os: "Debian",
     version: "11",
     kind: "machine",
-    icon: "D",
+    icon: "◆",
     ports: [22],
     software: [{ name: "mysql", version: "8.0", cves: [] }],
   },
@@ -166,7 +169,7 @@ const MACHINE_TEMPLATES: BuilderMachineTemplate[] = [
     os: "Network Appliance",
     version: "managed",
     kind: "network-device",
-    icon: "R",
+    icon: "↔️",
     ports: [],
     software: [],
   },
@@ -177,7 +180,7 @@ const MACHINE_TEMPLATES: BuilderMachineTemplate[] = [
     os: "Network Appliance",
     version: "managed",
     kind: "network-device",
-    icon: "F",
+    icon: "🛡️",
     ports: [],
     software: [],
   },
@@ -188,7 +191,7 @@ const MACHINE_TEMPLATES: BuilderMachineTemplate[] = [
     os: "Network Appliance",
     version: "managed",
     kind: "network-device",
-    icon: "S",
+    icon: "🔀",
     ports: [],
     software: [],
   },
@@ -199,7 +202,7 @@ const MACHINE_TEMPLATES: BuilderMachineTemplate[] = [
     os: "Ubuntu",
     version: "22.04",
     kind: "service",
-    icon: "H",
+    icon: "🌐",
     ports: [80, 443],
     software: [{ name: "nginx", version: "1.14.0", cves: ["CVE-2021-23017"] }],
   },
@@ -210,7 +213,7 @@ const MACHINE_TEMPLATES: BuilderMachineTemplate[] = [
     os: "Ubuntu",
     version: "22.04",
     kind: "service",
-    icon: "D",
+    icon: "🗄️",
     ports: [3306],
     software: [{ name: "mysql", version: "5.6", cves: ["CVE-2016-6662"] }],
   },
@@ -221,7 +224,7 @@ const MACHINE_TEMPLATES: BuilderMachineTemplate[] = [
     os: "Windows Server",
     version: "2019",
     kind: "service",
-    icon: "A",
+    icon: "🏢",
     ports: [53, 88, 389, 445],
     software: [{ name: "windows", version: "server-2019", cves: [] }],
   },
@@ -232,17 +235,49 @@ const MACHINE_TEMPLATES: BuilderMachineTemplate[] = [
     os: "Debian",
     version: "11",
     kind: "service",
-    icon: "M",
+    icon: "✉️",
     ports: [25, 143, 587],
     software: [{ name: "apache", version: "2.4.58", cves: [] }],
   },
 ];
 
-const categories: BuilderCategory[] = [
-  "Attacker Machines",
-  "Target Machines",
-  "Network Devices",
-  "Services",
+type PaletteGroupId = "attackers" | "machines" | "network" | "services";
+
+const paletteGroups: Array<{
+  id: PaletteGroupId;
+  label: string;
+  emoji: string;
+  description: string;
+  match: (template: BuilderMachineTemplate) => boolean;
+}> = [
+  {
+    id: "attackers",
+    label: "Attackers",
+    emoji: "💻",
+    description: "Operator workstations and testing boxes",
+    match: (template) => template.category === "Attacker Machines",
+  },
+  {
+    id: "machines",
+    label: "Machines",
+    emoji: "🖥️",
+    description: "Linux and Windows target hosts",
+    match: (template) => template.category === "Target Machines",
+  },
+  {
+    id: "network",
+    label: "Network",
+    emoji: "🔀",
+    description: "Routers, switches, and boundary controls",
+    match: (template) => template.category === "Network Devices",
+  },
+  {
+    id: "services",
+    label: "Apps",
+    emoji: "📦",
+    description: "Web apps, databases, identity, and services",
+    match: (template) => template.category === "Services",
+  },
 ];
 
 const defaultRule: ConnectionRule = {
@@ -259,6 +294,20 @@ const nodeTypes: NodeTypes = {
 
 type BuilderNode = Node<MachineNodeData>;
 type BuilderEdge = Edge<BuilderEdgeData>;
+
+function makeDefaultEdge(source: string, target: string, animated = false): BuilderEdge {
+  return {
+    id: `${source}-${target}-${crypto.randomUUID()}`,
+    source,
+    target,
+    animated,
+    data: { label: "TCP allow", rules: [defaultRule] },
+    style: {
+      stroke: "color-mix(in srgb, var(--primary) 72%, #64748b)",
+      strokeWidth: 1.8,
+    },
+  };
+}
 
 function cvesForSoftware(software: SoftwareConfig[]): string[] {
   return software.flatMap((item) => CVE_MAP[`${item.name}-${item.version}`] ?? []);
@@ -307,6 +356,8 @@ function BuilderPageContent() {
   const [templateCategory, setTemplateCategory] = useState("Custom");
   const [templateDifficulty, setTemplateDifficulty] = useState("Medium");
   const [portInput, setPortInput] = useState("");
+  const [activePaletteGroup, setActivePaletteGroup] = useState<PaletteGroupId>("attackers");
+  const [paletteSearch, setPaletteSearch] = useState("");
 
   const selectedNode = nodes.find((node) => node.id === selectedNodeId) ?? null;
   const selectedEdge = edges.find((edge) => edge.id === selectedEdgeId) ?? null;
@@ -352,9 +403,12 @@ function BuilderPageContent() {
         addEdge<BuilderEdge>(
           {
             ...connection,
-            animated: false,
+            animated: true,
             data: { label: "TCP allow", rules: [defaultRule] },
-            style: { stroke: "#3f3f46" },
+            style: {
+              stroke: "color-mix(in srgb, var(--primary) 72%, #64748b)",
+              strokeWidth: 1.8,
+            },
           },
           currentEdges
         )
@@ -379,6 +433,32 @@ function BuilderPageContent() {
     setSelectedEdgeId(null);
   }, []);
 
+  const addTemplateToCanvas = useCallback(
+    (template: BuilderMachineTemplate, position?: { x: number; y: number }) => {
+      const id = `${template.id}-${crypto.randomUUID()}`;
+
+      setNodes((currentNodes) => {
+        const index = currentNodes.length;
+        const node: BuilderNode = {
+          id,
+          type: template.kind === "network-device" ? "networkDevice" : "machine",
+          position:
+            position ?? {
+              x: 120 + (index % 3) * 230,
+              y: 120 + Math.floor(index / 3) * 150,
+            },
+          data: paletteTemplateToNodeData(template, index),
+        };
+
+        return [...currentNodes, node];
+      });
+      setSelectedNodeId(id);
+      setSelectedEdgeId(null);
+      toast({ title: "Asset added", description: template.label, tone: "success" });
+    },
+    [setNodes, toast]
+  );
+
   const onDragStart = (
     event: DragEvent<HTMLButtonElement>,
     template: BuilderMachineTemplate
@@ -397,20 +477,9 @@ function BuilderPageContent() {
         return;
       }
 
-      const id = `${template.id}-${crypto.randomUUID()}`;
-      const node: BuilderNode = {
-        id,
-        type: template.kind === "network-device" ? "networkDevice" : "machine",
-        position: screenToFlowPosition({ x: event.clientX, y: event.clientY }),
-        data: paletteTemplateToNodeData(template, nodes.length),
-      };
-
-      setNodes((currentNodes) => [...currentNodes, node]);
-      setSelectedNodeId(id);
-      setSelectedEdgeId(null);
-      toast({ title: "Machine added", description: template.label, tone: "success" });
+      addTemplateToCanvas(template, screenToFlowPosition({ x: event.clientX, y: event.clientY }));
     },
-    [nodes.length, screenToFlowPosition, setNodes, toast]
+    [addTemplateToCanvas, screenToFlowPosition]
   );
 
   const updateSelectedNodeData = (updater: (data: MachineNodeData) => MachineNodeData) => {
@@ -466,6 +535,43 @@ function BuilderPageContent() {
     toast({ title: "Canvas cleared", tone: "info" });
   };
 
+  const autoLinkTopology = useCallback(() => {
+    if (nodes.length < 2) {
+      toast({ title: "Add at least two assets", description: "Auto link needs two or more nodes.", tone: "info" });
+      return;
+    }
+
+    const networkHub = nodes.find((node) => node.data.kind === "network-device");
+    const proposedPairs = networkHub
+      ? nodes
+          .filter((node) => node.id !== networkHub.id)
+          .map((node) => [networkHub.id, node.id] as const)
+      : [...nodes]
+          .sort((a, b) => (a.position.y - b.position.y) || (a.position.x - b.position.x))
+          .slice(1)
+          .map((node, index, sortedNodes) => {
+            const source = index === 0
+              ? [...nodes].sort((a, b) => (a.position.y - b.position.y) || (a.position.x - b.position.x))[0]
+              : sortedNodes[index - 1];
+            return [source.id, node.id] as const;
+          });
+
+    const existingPairs = new Set(
+      edges.flatMap((edge) => [`${edge.source}->${edge.target}`, `${edge.target}->${edge.source}`])
+    );
+    const nextEdges = proposedPairs
+      .filter(([source, target]) => !existingPairs.has(`${source}->${target}`))
+      .map(([source, target]) => makeDefaultEdge(source, target, true));
+
+    if (!nextEdges.length) {
+      toast({ title: "Topology already linked", description: "No missing links were found.", tone: "info" });
+      return;
+    }
+
+    setEdges((currentEdges) => [...currentEdges, ...nextEdges]);
+    toast({ title: "Auto link complete", description: `${nextEdges.length} connection${nextEdges.length === 1 ? "" : "s"} added.`, tone: "success" });
+  }, [edges, nodes, setEdges, toast]);
+
   const exportJson = () => {
     const topology = buildTopology();
     const blob = new Blob([JSON.stringify(topology, null, 2)], {
@@ -509,29 +615,39 @@ function BuilderPageContent() {
     }
   };
 
-  const groupedTemplates = useMemo(
-    () =>
-      categories.map((category) => ({
-        category,
-        items: MACHINE_TEMPLATES.filter((template) => template.category === category),
-      })),
-    []
-  );
+  const activePalette = paletteGroups.find((group) => group.id === activePaletteGroup) ?? paletteGroups[0];
+  const paletteTemplates = useMemo(() => {
+    const query = paletteSearch.trim().toLowerCase();
+    return MACHINE_TEMPLATES.filter((template) => {
+      const matchesGroup = activePalette.match(template);
+      const matchesSearch =
+        !query ||
+        [template.label, template.os, template.version, template.category, template.software.map((item) => item.name).join(" ")]
+          .join(" ")
+          .toLowerCase()
+          .includes(query);
+
+      return matchesGroup && matchesSearch;
+    });
+  }, [activePalette, paletteSearch]);
 
   return (
-    <div className="space-y-5">
-      <header className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
+    <div className="space-y-4">
+      <header className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
         <div>
-          <h1 className="text-3xl text-foreground">Lab Builder</h1>
-          <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-            Design AWS-backed cyber range topologies with machines, services, and network policy before deployment.
+          <div className="flex flex-wrap items-center gap-2">
+            <h1 className="text-2xl font-semibold tracking-tight text-foreground">Lab Builder</h1>
+            <Badge tone="blue">Private topology</Badge>
+          </div>
+          <p className="mt-1 max-w-3xl text-[13px] text-muted-foreground">
+            Compose machines, apps, and network controls, then deploy through the existing private lab launch flow.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
           <Dialog open={saveOpen} onOpenChange={setSaveOpen}>
-            <Button type="button" variant="secondary" onClick={() => setSaveOpen(true)}>
+            <Button type="button" variant="secondary" size="sm" onClick={() => setSaveOpen(true)}>
               <Save className="h-4 w-4" />
-              Save Template
+              Save
             </Button>
             <SaveTemplateDialog
               name={templateName}
@@ -546,9 +662,9 @@ function BuilderPageContent() {
             />
           </Dialog>
           <Dialog open={deployOpen} onOpenChange={setDeployOpen}>
-            <Button type="button" onClick={() => setDeployOpen(true)} disabled={!nodes.length}>
+            <Button type="button" size="sm" onClick={() => setDeployOpen(true)} disabled={!nodes.length}>
               <Rocket className="h-4 w-4" />
-              Deploy Now
+              Deploy
             </Button>
             <DeployDialog
               machineCount={nodes.length}
@@ -561,57 +677,55 @@ function BuilderPageContent() {
           </Dialog>
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button type="button" variant="secondary" onClick={clearCanvas}>
+              <Button type="button" variant="secondary" size="sm" onClick={autoLinkTopology} disabled={nodes.length < 2}>
+                <Link2 className="h-4 w-4" />
+                Auto link
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Connect hosts to a network device, or chain them when no network node exists.</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button type="button" variant="secondary" size="sm" onClick={clearCanvas}>
                 <Eraser className="h-4 w-4" />
-                Clear Canvas
+                Clear
               </Button>
             </TooltipTrigger>
             <TooltipContent>Remove all machines and links from this topology.</TooltipContent>
           </Tooltip>
-          <Button type="button" variant="secondary" onClick={exportJson} disabled={!nodes.length}>
+          <Button type="button" variant="secondary" size="sm" onClick={exportJson} disabled={!nodes.length}>
             <Download className="h-4 w-4" />
-            Export JSON
+            Export
           </Button>
         </div>
       </header>
 
-      <section className="grid min-h-[720px] gap-4 xl:grid-cols-[20rem_minmax(0,1fr)]">
-        <aside className="app-card overflow-hidden">
-          <div className="border-b border-border p-4">
-            <h2 className="text-sm font-medium text-foreground">Machine palette</h2>
-            <p className="mt-1 text-xs text-muted-foreground">
-              {savedTemplates.length} saved locally
-            </p>
-          </div>
-          <div className="max-h-[650px] space-y-5 overflow-y-auto p-4">
-            {groupedTemplates.map((group) => (
-              <div key={group.category}>
-                <p className="mb-2 text-xs uppercase tracking-[0.08em] text-muted-foreground">
-                  {group.category}
-                </p>
-                <div className="grid gap-2">
-                  {group.items.map((template) => (
-                    <button
-                      key={template.id}
-                      type="button"
-                      draggable
-                      onDragStart={(event) => onDragStart(event, template)}
-                      className="rounded-lg border border-border bg-secondary/45 p-3 text-left hover:border-primary/70 hover:bg-secondary"
-                    >
-                      <div className="flex items-center justify-between gap-3">
-                        <span className="text-sm text-foreground">{template.label}</span>
-                        <Badge>{template.version}</Badge>
-                      </div>
-                      <p className="mt-1 text-xs text-muted-foreground">{template.os}</p>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
-        </aside>
+      <section className="grid min-h-[720px] gap-3 xl:grid-cols-[20rem_minmax(0,1fr)]">
+        <PaletteSidebar
+          activeGroup={activePaletteGroup}
+          activePalette={activePalette}
+          groups={paletteGroups}
+          templates={paletteTemplates}
+          search={paletteSearch}
+          savedCount={savedTemplates.length}
+          onSearch={setPaletteSearch}
+          onSelectGroup={setActivePaletteGroup}
+          onAddTemplate={addTemplateToCanvas}
+          onDragStart={onDragStart}
+        />
 
-        <div className="relative overflow-hidden rounded-xl border border-border bg-card">
+        <div className="relative overflow-hidden rounded-lg border border-border bg-card shadow-[var(--card-shadow)]">
+          <div className="absolute left-4 right-4 top-4 z-10 flex flex-wrap items-center justify-between gap-2">
+            <TopologySummary
+              machineCount={nodes.length}
+              connectionCount={edges.length}
+              estimatedCredits={estimatedCredits}
+            />
+            <div className="pointer-events-none hidden items-center gap-2 rounded-full border border-border bg-card/85 px-3 py-1.5 text-[11px] text-muted-foreground shadow-sm backdrop-blur md:flex">
+              <MousePointer2 className="h-3.5 w-3.5" />
+              Click assets to add, drag to place, click nodes for settings
+            </div>
+          </div>
           <div
             className="h-[720px]"
             onDragOver={(event) => {
@@ -631,45 +745,178 @@ function BuilderPageContent() {
               onEdgeClick={onEdgeClick}
               onPaneClick={onPaneClick}
               fitView
-              className="builder-grid"
+              className="builder-grid bg-background/40"
             >
-              <Background color="#1e1e2a" gap={24} variant={BackgroundVariant.Dots} />
+              <Background color="color-mix(in srgb, var(--border) 70%, transparent)" gap={22} variant={BackgroundVariant.Dots} />
               <Controls />
               <MiniMap
-                nodeColor={(node) => (node.type === "networkDevice" ? "#4f46e5" : "#22c55e")}
+                nodeColor={(node) => (node.type === "networkDevice" ? "#38bdf8" : "#34d399")}
                 maskColor="rgba(10, 10, 15, 0.72)"
               />
             </ReactFlow>
           </div>
 
-          <TopologySummary
-            machineCount={nodes.length}
-            connectionCount={edges.length}
-            estimatedCredits={estimatedCredits}
-          />
+          <AnimatePresence>
+            {selectedNode ? (
+              <MachineConfigPanel
+                key={selectedNode.id}
+                node={selectedNode}
+                portInput={portInput}
+                setPortInput={setPortInput}
+                onClose={() => setSelectedNodeId(null)}
+                onChange={updateSelectedNodeData}
+                onSoftwareVersionChange={updateSoftwareVersion}
+                onAddPort={addPort}
+              />
+            ) : null}
 
-          {selectedNode ? (
-            <MachineConfigPanel
-              node={selectedNode}
-              portInput={portInput}
-              setPortInput={setPortInput}
-              onClose={() => setSelectedNodeId(null)}
-              onChange={updateSelectedNodeData}
-              onSoftwareVersionChange={updateSoftwareVersion}
-              onAddPort={addPort}
-            />
-          ) : null}
-
-          {selectedEdge ? (
-            <ConnectionConfigPanel
-              edge={selectedEdge}
-              onClose={() => setSelectedEdgeId(null)}
-              onChange={updateSelectedEdgeData}
-            />
-          ) : null}
+            {selectedEdge ? (
+              <ConnectionConfigPanel
+                key={selectedEdge.id}
+                edge={selectedEdge}
+                onClose={() => setSelectedEdgeId(null)}
+                onChange={updateSelectedEdgeData}
+              />
+            ) : null}
+          </AnimatePresence>
         </div>
       </section>
     </div>
+  );
+}
+
+function PaletteSidebar({
+  activeGroup,
+  activePalette,
+  groups,
+  templates,
+  search,
+  savedCount,
+  onSearch,
+  onSelectGroup,
+  onAddTemplate,
+  onDragStart,
+}: {
+  activeGroup: PaletteGroupId;
+  activePalette: (typeof paletteGroups)[number];
+  groups: typeof paletteGroups;
+  templates: BuilderMachineTemplate[];
+  search: string;
+  savedCount: number;
+  onSearch: (value: string) => void;
+  onSelectGroup: (value: PaletteGroupId) => void;
+  onAddTemplate: (template: BuilderMachineTemplate) => void;
+  onDragStart: (event: DragEvent<HTMLButtonElement>, template: BuilderMachineTemplate) => void;
+}) {
+  return (
+    <aside className="app-card grid min-h-[720px] overflow-hidden lg:grid-cols-[4.25rem_minmax(0,1fr)]">
+      <div className="flex border-b border-border bg-secondary/30 p-2 lg:flex-col lg:border-b-0 lg:border-r">
+        {groups.map((group) => {
+          const active = group.id === activeGroup;
+          const count = MACHINE_TEMPLATES.filter(group.match).length;
+          return (
+            <Tooltip key={group.id}>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  onClick={() => onSelectGroup(group.id)}
+                  className={cn(
+                    "relative flex h-12 min-w-12 flex-1 flex-col items-center justify-center rounded-lg text-lg transition lg:flex-none",
+                    active
+                      ? "bg-primary/12 text-primary shadow-sm"
+                      : "text-muted-foreground hover:bg-secondary hover:text-foreground"
+                  )}
+                  aria-label={group.label}
+                >
+                  <span aria-hidden>{group.emoji}</span>
+                  <span className="mt-0.5 text-[10px] font-medium tabular-nums">{count}</span>
+                  {active ? <span className="absolute bottom-0 h-0.5 w-6 rounded-full bg-primary lg:bottom-auto lg:right-0 lg:h-6 lg:w-0.5" /> : null}
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>{group.label}</TooltipContent>
+            </Tooltip>
+          );
+        })}
+      </div>
+
+      <div className="flex min-w-0 flex-col">
+        <div className="border-b border-border p-4">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <span className="text-xl" aria-hidden>{activePalette.emoji}</span>
+                <h2 className="truncate text-sm font-semibold text-foreground">{activePalette.label}</h2>
+              </div>
+              <p className="mt-1 text-[11px] leading-5 text-muted-foreground">{activePalette.description}</p>
+            </div>
+            <Badge>{savedCount} saved</Badge>
+          </div>
+          <div className="relative mt-3">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground/50" />
+            <Input
+              value={search}
+              onChange={(event) => onSearch(event.target.value)}
+              placeholder="Search assets..."
+              className="h-9 pl-8 text-[12px]"
+            />
+          </div>
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-y-auto p-3">
+          {templates.length ? (
+            <div className="grid gap-2">
+              {templates.map((template) => {
+                const cves = cvesForSoftware(template.software);
+                return (
+                  <button
+                    key={template.id}
+                    type="button"
+                    draggable
+                    onDragStart={(event) => onDragStart(event, template)}
+                    onClick={() => onAddTemplate(template)}
+                    className="group rounded-lg border border-border bg-secondary/30 p-3 text-left transition hover:border-primary/35 hover:bg-secondary/60"
+                  >
+                    <div className="flex items-start gap-3">
+                      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border bg-card text-lg">
+                        {template.icon}
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="flex items-center justify-between gap-2">
+                          <span className="truncate text-[13px] font-semibold text-foreground">{template.label}</span>
+                          <Plus className="h-3.5 w-3.5 shrink-0 text-muted-foreground/45 transition group-hover:text-primary" />
+                        </span>
+                        <span className="mt-0.5 block truncate text-[11px] text-muted-foreground">
+                          {template.os} · {template.version}
+                        </span>
+                      </span>
+                    </div>
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {template.ports.slice(0, 4).map((port) => (
+                        <Badge key={port} className="h-5 px-1.5 text-[10px]">{port}</Badge>
+                      ))}
+                      {template.software.slice(0, 2).map((item) => (
+                        <Badge key={`${template.id}-${item.name}`} tone="blue" className="h-5 px-1.5 text-[10px]">
+                          {item.name}
+                        </Badge>
+                      ))}
+                      {cves.length ? (
+                        <Badge tone="red" className="h-5 px-1.5 text-[10px]">{cves.length} CVE</Badge>
+                      ) : null}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="rounded-lg border border-dashed border-border bg-secondary/25 p-6 text-center">
+              <Search className="mx-auto h-5 w-5 text-muted-foreground/55" />
+              <p className="mt-2 text-sm font-medium text-foreground">No assets found</p>
+              <p className="mt-1 text-xs text-muted-foreground">Try another category or search term.</p>
+            </div>
+          )}
+        </div>
+      </div>
+    </aside>
   );
 }
 
@@ -713,10 +960,11 @@ function MachineConfigPanel({
       initial={{ x: 360, opacity: 0 }}
       animate={{ x: 0, opacity: 1 }}
       exit={{ x: 360, opacity: 0 }}
-      className="absolute bottom-0 right-0 top-0 z-20 w-full max-w-sm overflow-y-auto border-l border-border bg-card/95 p-5 backdrop-blur"
+      transition={{ duration: 0.18, ease: "easeOut" }}
+      className="absolute bottom-0 right-0 top-0 z-20 w-full max-w-[22rem] overflow-y-auto border-l border-border bg-card/95 p-4 shadow-2xl backdrop-blur"
     >
-      <PanelHeader title="Machine config" onClose={onClose} />
-      <div className="mt-5 space-y-5">
+      <PanelHeader title="Asset settings" subtitle={node.data.label} onClose={onClose} />
+      <div className="mt-4 space-y-4">
         <div className="space-y-2">
           <Label htmlFor="machine-name">Machine name</Label>
           <Input
@@ -725,24 +973,24 @@ function MachineConfigPanel({
             onChange={(event) => onChange((data) => ({ ...data, label: event.target.value }))}
           />
         </div>
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div className="grid gap-2 sm:grid-cols-2">
           <InfoBlock label="OS" value={node.data.os} />
           <InfoBlock label="Version" value={node.data.version} />
         </div>
-        <div className="space-y-3">
+        <div className="space-y-2.5">
           <Label>Software</Label>
           {node.data.software.length ? (
             node.data.software.map((item) => {
               const versions = SOFTWARE_VERSIONS[item.name] ?? [item.version];
               const cves = CVE_MAP[`${item.name}-${item.version}`] ?? [];
               return (
-                <div key={item.name} className="rounded-lg border border-border bg-secondary/45 p-3">
+                <div key={item.name} className="rounded-lg border border-border bg-secondary/35 p-3">
                   <div className="flex items-center justify-between gap-3">
                     <span className="text-sm text-foreground">{item.name}</span>
                     <select
                       value={item.version}
                       onChange={(event) => onSoftwareVersionChange(item.name, event.target.value)}
-                      className="focus-ring rounded-lg border border-input bg-background px-2 py-1 text-sm text-foreground"
+                      className="focus-ring h-8 rounded-lg border border-input bg-background px-2 text-xs text-foreground"
                     >
                       {versions.map((version) => (
                         <option key={version} value={version}>
@@ -779,7 +1027,7 @@ function MachineConfigPanel({
             onChange={(event) => onChange((data) => ({ ...data, ip: event.target.value }))}
           />
         </div>
-        <div className="space-y-3">
+        <div className="space-y-2.5">
           <Label>Exposed ports</Label>
           <div className="flex flex-wrap gap-2">
             {node.data.ports.map((port) => (
@@ -834,11 +1082,13 @@ function ConnectionConfigPanel({
     <motion.aside
       initial={{ x: 360, opacity: 0 }}
       animate={{ x: 0, opacity: 1 }}
-      className="absolute bottom-0 right-0 top-0 z-20 w-full max-w-sm overflow-y-auto border-l border-border bg-card/95 p-5 backdrop-blur"
+      exit={{ x: 360, opacity: 0 }}
+      transition={{ duration: 0.18, ease: "easeOut" }}
+      className="absolute bottom-0 right-0 top-0 z-20 w-full max-w-[22rem] overflow-y-auto border-l border-border bg-card/95 p-4 shadow-2xl backdrop-blur"
     >
-      <PanelHeader title="Connection rules" onClose={onClose} />
-      <div className="mt-5 space-y-5">
-        <div className="grid gap-3 sm:grid-cols-2">
+      <PanelHeader title="Link settings" subtitle={edge.data?.label ?? "TCP allow"} onClose={onClose} />
+      <div className="mt-4 space-y-4">
+        <div className="grid gap-2 sm:grid-cols-2">
           <InfoBlock label="Source" value={edge.source} mono />
           <InfoBlock label="Target" value={edge.target} mono />
         </div>
@@ -970,14 +1220,17 @@ function DeployDialog({
   );
 }
 
-function PanelHeader({ title, onClose }: { title: string; onClose: () => void }) {
+function PanelHeader({ title, subtitle, onClose }: { title: string; subtitle?: string; onClose: () => void }) {
   return (
     <div className="flex items-center justify-between gap-3">
-      <h2 className="text-lg text-foreground">{title}</h2>
+      <div className="min-w-0">
+        <h2 className="text-sm font-semibold text-foreground">{title}</h2>
+        {subtitle ? <p className="mt-0.5 truncate text-[11px] text-muted-foreground">{subtitle}</p> : null}
+      </div>
       <button
         type="button"
         onClick={onClose}
-        className="rounded-lg p-2 text-muted-foreground hover:bg-secondary hover:text-foreground"
+        className="rounded-lg p-1.5 text-muted-foreground hover:bg-secondary hover:text-foreground"
         aria-label="Close panel"
       >
         <X className="h-4 w-4" />
@@ -996,9 +1249,9 @@ function InfoBlock({
   mono?: boolean;
 }) {
   return (
-    <div className="rounded-lg border border-border bg-secondary/45 p-3">
-      <p className="text-xs text-muted-foreground">{label}</p>
-      <p className={cn("mt-1 truncate text-sm text-foreground", mono && "mono")}>{value}</p>
+    <div className="rounded-lg border border-border bg-secondary/35 p-3">
+      <p className="text-[11px] text-muted-foreground">{label}</p>
+      <p className={cn("mt-1 truncate text-[13px] font-medium text-foreground", mono && "mono")}>{value}</p>
     </div>
   );
 }
