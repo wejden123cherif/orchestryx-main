@@ -151,6 +151,7 @@ Client
 
 Key docs:
 
+- [CI/CD](docs/ci-cd.md)
 - [Overview](docs/overview.md)
 - [Architecture](docs/architecture.md)
 - [Web lab provisioning](docs/provisioning.md)
